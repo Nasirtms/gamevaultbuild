@@ -1,0 +1,9 @@
+{
+  "name": "Game Vault 2.0",
+  "short_name": "Game Vault",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}

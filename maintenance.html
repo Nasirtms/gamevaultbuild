@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Game Vault 2.0 Under Maintenance</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      min-height: 100%;
+      height: 100%;
+    }
+    body {
+      display: -webkit-flex;
+      display: flex;
+      -webkit-align-items: center;
+      align-items: center;
+      -webkit-justify-content: center;
+      justify-content: center;
+      padding: 1.25rem;
+      position: relative;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 0;
+      background-color: #12051f;
+      background-image: url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDACAWGBwYFCAcGhwkIiAmMFA0MCwsMGJGSjpQdGZ6eHJmcG6AkLicgIiuim5woNqirr7EztDOfJri8uDI8LjKzsb/2wBDASIkJDAqMF40NF7GhHCExsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsb/wAARCAAJABQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDLVVyAfxp+IxtyAfWm/wDLametPnbZo0kgO0HrRTDRWnOzM//Z");
+      background-position: center center;
+      background-size: cover;
+      background-repeat: no-repeat;
+      -webkit-filter: blur(20px);
+      filter: blur(20px);
+      -webkit-transform: scale(1.1);
+      transform: scale(1.1);
+      -webkit-transition: background-image 0.6s ease;
+      transition: background-image 0.6s ease;
+    }
+    body.cm-bg-loaded::before {
+      background-image: var(--cm-splash-bg, url("TemplateData/Splash-BG.png"));
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 0;
+      background: rgba(12, 0, 28, 0.42);
+      pointer-events: none;
+    }
+    .cm-inner {
+      position: relative;
+      z-index: 1;
+      display: -webkit-flex;
+      display: flex;
+      -webkit-flex-direction: column;
+      flex-direction: column;
+      -webkit-align-items: center;
+      align-items: center;
+      width: 100%;
+      max-width: 36rem;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .cm-logo {
+      text-align: center;
+      margin-bottom: 0.5rem;
+    }
+    .cm-logo img {
+      width: 42vw;
+      min-width: 140px;
+      max-width: 320px;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+      -webkit-filter: drop-shadow(0 4px 18px rgba(100, 190, 255, 0.55));
+      filter: drop-shadow(0 4px 18px rgba(100, 190, 255, 0.55));
+    }
+    .cm-panel {
+      width: min(94vw, 32rem);
+    }
+    .cm-panel img {
+      width: 100%;
+      height: auto;
+      display: block;
+      -webkit-filter: drop-shadow(0 8px 32px rgba(0, 0, 0, 0.45));
+      filter: drop-shadow(0 8px 32px rgba(0, 0, 0, 0.45));
+    }
+    @media (max-height: 500px) and (orientation: landscape) {
+      body { padding: 0.5rem; }
+      .cm-logo img { max-width: 180px; min-width: 100px; }
+      .cm-panel { width: min(70vw, 26rem); }
+    }
+  </style>
+</head>
+<body>
+  <div class="cm-inner">
+    <div class="cm-logo" aria-hidden="true">
+      <img
+        id="cm-logo-img"
+        src="TemplateData/unity-logo-light.png"
+        alt="Game Vault 2.0"
+      />
+    </div>
+    <div class="cm-panel">
+      <img
+        id="cm-card-img"
+        src="TemplateData/Under-Maintanence.png"
+        alt="Game is currently under maintenance. Please try again later."
+      />
+    </div>
+  </div>
+  <script>
+    (function () {
+      var splashPaths = [
+        'TemplateData/Splash-BG.png',
+        '/casino-maintenance-assets/Splash-BG.png'
+      ];
+      var logoPaths = [
+        'TemplateData/unity-logo-light.png',
+        '/casino-maintenance-assets/unity-logo-light.png'
+      ];
+      var cardPaths = [
+        'TemplateData/Under-Maintanence.png',
+        '/casino-maintenance-assets/Under-Maintanence.png'
+      ];
+
+      function bindImgFallback(imgEl, paths) {
+        var idx = 0;
+        imgEl.onerror = function () {
+          idx += 1;
+          if (idx < paths.length) imgEl.src = paths[idx];
+        };
+      }
+
+      bindImgFallback(document.getElementById('cm-logo-img'), logoPaths);
+      bindImgFallback(document.getElementById('cm-card-img'), cardPaths);
+
+      var splashIdx = 0;
+      function tryLoadSplash() {
+        if (splashIdx >= splashPaths.length) {
+          document.body.classList.add('cm-bg-loaded');
+          return;
+        }
+        var url = splashPaths[splashIdx];
+        var bgImg = new Image();
+        bgImg.onload = function () {
+          document.body.style.setProperty('--cm-splash-bg', 'url("' + url + '")');
+          document.body.classList.add('cm-bg-loaded');
+        };
+        bgImg.onerror = function () {
+          splashIdx += 1;
+          tryLoadSplash();
+        };
+        bgImg.src = url;
+      }
+      tryLoadSplash();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,1271 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Game Vault 2.0</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <link rel="stylesheet" href="TemplateData/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#000000">
+    <meta name="casino-api-base" content="">
+    <style>
+      #loader-fs-hint {
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        z-index: 99997;
+        display: none;
+        flex-direction: column; align-items: center; justify-content: center;
+        gap: 18px; padding: 24px;
+        background: rgba(8, 4, 20, 0.55);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        pointer-events: none;
+        user-select: none; -webkit-user-select: none;
+      }
+      #loader-fs-hint.show {
+        display: flex;
+        animation: loaderHintFadeIn 0.45s ease-out;
+      }
+      .loader-hint-card {
+        display: flex; flex-direction: column; align-items: center; gap: 16px;
+        padding: 28px 38px;
+        border-radius: 22px;
+        background: rgba(20, 10, 40, 0.6);
+        border: 1px solid rgba(140, 100, 255, 0.3);
+        box-shadow: 0 0 30px rgba(100, 60, 200, 0.2), 0 12px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      }
+      .loader-hint-icon {
+        width: 56px; height: 56px;
+        position: relative; display: flex; align-items: center; justify-content: center;
+      }
+      .tap-circle {
+        width: 46px; height: 46px; border-radius: 50%;
+        border: 2.5px solid rgba(120, 200, 255, 0.7);
+        position: relative;
+        animation: loaderTapPulse 1.6s ease-in-out infinite;
+        box-shadow: 0 0 14px rgba(100, 180, 255, 0.3);
+      }
+      .tap-circle::after {
+        content: '';
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 12px; height: 12px; border-radius: 50%;
+        background: linear-gradient(135deg, #78c8ff, #a78bfa);
+        box-shadow: 0 0 10px rgba(120, 200, 255, 0.5);
+      }
+      .loader-hint-text {
+        font-family: "Trebuchet MS", "Segoe UI", Tahoma, Geneva, sans-serif;
+        font-size: 16px; font-weight: 700; letter-spacing: 0.5px;
+        text-align: center; line-height: 1.4;
+      }
+      .hint-tap { color: #78c8ff; text-shadow: 0 0 8px rgba(100, 180, 255, 0.5); }
+      .hint-fs { color: #a78bfa; text-shadow: 0 0 8px rgba(167, 139, 250, 0.5); }
+      .hint-normal { color: rgba(255, 255, 255, 0.9); }
+      @keyframes loaderTapPulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.15); opacity: 0.6; }
+      }
+      @keyframes loaderHintFadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      #rotate-device {
+        position: fixed !important; top: 0 !important; left: 0 !important;
+        width: 100vw !important; height: calc(var(--vh, 1vh) * 100) !important;
+        background: radial-gradient(ellipse at 50% 40%, rgba(30, 15, 60, 0.95), rgba(8, 4, 18, 0.98)) !important;
+        color: #fff !important;
+        display: none !important;
+        justify-content: center !important; align-items: center !important;
+        z-index: 99999 !important;
+        backdrop-filter: blur(12px) !important; -webkit-backdrop-filter: blur(12px) !important;
+      }
+      #rotate-device.show {
+        display: flex !important;
+        animation: rotateFadeIn 0.5s ease-out;
+      }
+      .rotate-content {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 24px; padding: 36px 44px;
+        max-width: min(420px, 92vw); text-align: center;
+        background: rgba(20, 10, 45, 0.5);
+        border-radius: 24px;
+        border: 1px solid rgba(120, 80, 220, 0.25);
+        box-shadow: 0 0 40px rgba(100, 60, 200, 0.15), 0 16px 48px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      }
+      .rotate-text {
+        font-family: 'Rajdhani', Arial, sans-serif;
+        font-size: 20px; font-weight: 600; line-height: 1.3;
+        letter-spacing: 2px; text-transform: uppercase;
+        user-select: none;
+        background: linear-gradient(135deg, #ffffff 0%, #78c8ff 30%, #a78bfa 50%, #78c8ff 70%, #ffffff 100%);
+        background-size: 200% auto;
+        -webkit-background-clip: text; background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: rotateTextShimmer 3s linear infinite;
+      }
+      .rotate-icon {
+        width: 100px; height: 100px; position: relative;
+        display: grid; place-items: center;
+        animation: rotateDeviceWiggle 1.35s ease-in-out infinite;
+      }
+      .phone {
+        width: 48px; height: 76px;
+        border: 2.5px solid rgba(120, 200, 255, 0.8); border-radius: 11px;
+        background: rgba(120, 200, 255, 0.05);
+        box-shadow: 0 0 20px rgba(120, 200, 255, 0.15), 0 10px 30px rgba(0, 0, 0, 0.4), inset 0 0 12px rgba(120, 200, 255, 0.05);
+        position: relative;
+      }
+      .phone::before {
+        content: ''; position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+        width: 18px; height: 3px; border-radius: 999px;
+        background: linear-gradient(90deg, rgba(120, 200, 255, 0.6), rgba(167, 139, 250, 0.6));
+      }
+      .phone::after {
+        content: ''; position: absolute; bottom: 7px; left: 50%; transform: translateX(-50%);
+        width: 9px; height: 9px; border-radius: 50%;
+        border: 2px solid rgba(167, 139, 250, 0.5);
+        box-shadow: 0 0 6px rgba(167, 139, 250, 0.3);
+      }
+      .hint-arrow {
+        position: absolute; inset: 0; border-radius: 999px;
+        border: 2.5px dashed rgba(120, 200, 255, 0.2);
+        animation: hintArrowPulse 2s ease-in-out infinite;
+      }
+      @keyframes rotateDeviceWiggle {
+        0%   { transform: rotate(0deg); }
+        25%  { transform: rotate(0deg); }
+        55%  { transform: rotate(90deg); }
+        80%  { transform: rotate(90deg); }
+        100% { transform: rotate(0deg); }
+      }
+      @keyframes hintArrowPulse {
+        0%, 100% { opacity: 0.4; border-color: rgba(120, 200, 255, 0.2); }
+        50%      { opacity: 1; border-color: rgba(167, 139, 250, 0.35); }
+      }
+      @keyframes rotateTextShimmer {
+        0%   { background-position: 200% center; }
+        100% { background-position: -200% center; }
+      }
+      @keyframes rotateFadeIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .rotate-icon { animation: none; }
+        .hint-arrow { animation: none; }
+        .rotate-text { animation: none; }
+      }
+
+      /* ── iOS Safari fullscreen workaround ── */
+
+      /* html element: enable scrolling before game starts */
+      .ios-safari-fullscreen-workaround {
+        --unity-height: 100dvh;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        height: auto !important;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .ios-safari-fullscreen-workaround body {
+        min-height: calc(var(--unity-height, 100dvh) + 80px) !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch;
+        height: auto !important;
+      }
+
+      .ios-safari-fullscreen-workaround #unity-container {
+        position: -webkit-sticky !important;
+        position: sticky !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: var(--unity-height, 100dvh) !important;
+      }
+
+      /* Prevent canvas from stealing touches before game starts */
+      .ios-safari-fullscreen-workaround #unity-canvas {
+        width: 100% !important;
+        height: 100% !important;
+        touch-action: none !important;
+        pointer-events: none !important;
+      }
+
+      /* Scroll spacer: provides the extra scrollable area below the sticky container */
+      #ios-scroll-spacer {
+        display: none;
+      }
+      .ios-safari-fullscreen-workaround #ios-scroll-spacer {
+        display: block !important;
+        width: 100%;
+        height: 90px;
+      }
+
+      /* After Start Game: lock scroll, fix container, restore touch on canvas */
+      .ios-safari-fullscreen-workaround.ios-game-started {
+        overflow: hidden !important;
+        height: var(--unity-height, 100dvh) !important;
+      }
+
+      .ios-safari-fullscreen-workaround.ios-game-started body {
+        min-height: var(--unity-height, 100dvh) !important;
+        overflow: hidden !important;
+        height: var(--unity-height, 100dvh) !important;
+      }
+
+      .ios-safari-fullscreen-workaround.ios-game-started #unity-container {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: var(--unity-height, 100dvh) !important;
+      }
+
+      .ios-safari-fullscreen-workaround.ios-game-started #unity-canvas {
+        touch-action: auto !important;
+        pointer-events: auto !important;
+      }
+
+      .ios-safari-fullscreen-workaround.ios-game-started #ios-scroll-spacer {
+        display: none !important;
+      }
+
+      /* iOS Safari swipe hint — fullscreen blur overlay */
+      #ios-swipe-hint {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        z-index: 100001;
+        flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 18px;
+        background: rgba(8, 4, 20, 0.6);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        pointer-events: none;
+        user-select: none; -webkit-user-select: none;
+      }
+      #ios-swipe-hint.show {
+        display: flex;
+        animation: iosSwipeHintIn 0.5s ease-out;
+      }
+      #ios-swipe-hint .swipe-icon-circle {
+        width: 56px; height: 56px;
+        border-radius: 50%;
+        border: 2.5px solid rgba(120, 200, 255, 0.6);
+        display: flex; align-items: center; justify-content: center;
+        animation: iosSwipePulse 1.6s ease-in-out infinite;
+        box-shadow: 0 0 14px rgba(100, 180, 255, 0.25);
+      }
+      #ios-swipe-hint .swipe-icon-circle .swipe-arrow {
+        font-size: 26px; line-height: 1;
+        color: #78c8ff;
+        animation: iosSwipeArrow 1.2s ease-in-out infinite;
+      }
+      #ios-swipe-hint .swipe-text {
+        font-family: 'Rajdhani', 'Trebuchet MS', sans-serif;
+        font-size: 17px; font-weight: 700;
+        letter-spacing: 1.5px; text-transform: uppercase;
+        text-align: center; line-height: 1.4;
+      }
+      #ios-swipe-hint .swipe-text .sw-action {
+        color: #78c8ff;
+        text-shadow: 0 0 8px rgba(100, 180, 255, 0.5);
+      }
+      #ios-swipe-hint .swipe-text .sw-label {
+        color: rgba(255, 255, 255, 0.9);
+      }
+      #ios-swipe-hint .swipe-text .sw-target {
+        color: #a78bfa;
+        text-shadow: 0 0 8px rgba(167, 139, 250, 0.5);
+      }
+      @keyframes iosSwipeHintIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      @keyframes iosSwipeArrow {
+        0%, 100% { transform: translateY(0); }
+        50%      { transform: translateY(-6px); }
+      }
+      @keyframes iosSwipePulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50%      { transform: scale(1.12); opacity: 0.6; }
+      }
+
+
+    </style>
+  </head>
+  <body>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width=1920 height=1080 tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo-fill-container">
+          <div id="unity-logo-base"></div>
+          <div id="unity-logo-fill"></div>
+        </div>
+        <div id="unity-progress-divider"></div>
+        <div id="unity-progress-text">
+          <div class="unity-progress-line">
+            <span class="unity-progress-label">LOADING</span>
+            <span class="unity-progress-value">0%</span>
+          </div>
+          <div class="unity-progress-speed">Est. speed: calculating...</div>
+        </div>
+      </div>
+      <div id="unity-warning"> </div>
+    </div>
+
+    <div id="ios-scroll-spacer"></div>
+
+    <div id="loader-fs-hint">
+      <div class="loader-hint-card">
+        <div class="loader-hint-icon" aria-hidden="true">
+          <div class="tap-circle"></div>
+        </div>
+        <div class="loader-hint-text" id="loader-fs-hint-text">
+          <span class="hint-tap">Tap</span>
+          <span class="hint-normal">anywhere for</span>
+          <span class="hint-fs">Fullscreen</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="rotate-device">
+      <div class="rotate-content" role="status" aria-live="polite" aria-label="Rotate device instruction">
+        <div class="rotate-icon" aria-hidden="true">
+          <div class="hint-arrow"></div>
+          <div class="phone"></div>
+        </div>
+        <div class="rotate-text">Please rotate your device</div>
+      </div>
+    </div>
+
+    <div id="ios-swipe-hint">
+      <div class="swipe-icon-circle"><span class="swipe-arrow">&#8593;</span></div>
+      <div class="swipe-text">
+        <span class="sw-action">Swipe up</span>
+        <span class="sw-label">for</span>
+        <span class="sw-target">Fullscreen</span>
+      </div>
+    </div>
+
+    <script>
+
+      var container = document.querySelector("#unity-container");
+      var canvas = document.querySelector("#unity-canvas");
+      var loadingBar = document.querySelector("#unity-loading-bar");
+      var warningBanner = document.querySelector("#unity-warning");
+
+      var logoFill = document.querySelector("#unity-logo-fill");
+      var progressLabel = document.querySelector(".unity-progress-label");
+      var progressValue = document.querySelector(".unity-progress-value");
+      var progressSpeed = document.querySelector(".unity-progress-speed");
+      var _maintenanceActive = false;
+      var buildVersion = "1778929172191";
+
+      var totalDownloadBytes = 0;
+      var lastProgressTime = 0;
+      var lastProgressValue = 0;
+      var currentDownloadSpeedBps = 0;
+
+      function formatSpeed(bytesPerSecond) {
+        if (bytesPerSecond <= 0) return '';
+        if (bytesPerSecond >= 1048576) return (bytesPerSecond / 1048576).toFixed(1) + ' MB/s';
+        if (bytesPerSecond >= 1024) return (bytesPerSecond / 1024).toFixed(0) + ' KB/s';
+        return bytesPerSecond.toFixed(0) + ' B/s';
+      }
+
+      var smoothProgress = {
+        currentValue: 0,
+        targetValue: 0,
+        animationFrameId: null,
+        isAnimating: false,
+        lastUpdateTime: 0,
+        minUpdateInterval: 16,
+
+        start: function () {
+          if (!this.isAnimating) {
+            this.isAnimating = true;
+            this.lastUpdateTime = performance.now();
+            this.animate();
+          }
+        },
+
+        stop: function () {
+          this.isAnimating = false;
+          if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+          }
+        },
+
+        setTarget: function (value) {
+          this.targetValue = Math.max(this.targetValue, Math.min(1, value));
+          if (!this.isAnimating) this.start();
+        },
+
+        animate: function () {
+          if (!this.isAnimating) return;
+          var now = performance.now();
+          if (now - this.lastUpdateTime >= this.minUpdateInterval) {
+            var difference = this.targetValue - this.currentValue;
+            if (Math.abs(difference) < 0.001) {
+              this.currentValue = this.targetValue;
+              this.updateUI();
+              if (this.targetValue >= 1) { this.stop(); return; }
+            } else {
+              var speed = 0.12 + (Math.abs(difference) * 0.08);
+              if (speed > 0.25) speed = 0.25;
+              this.currentValue += difference * speed;
+              this.updateUI();
+            }
+            this.lastUpdateTime = now;
+          }
+          var self = this;
+          this.animationFrameId = requestAnimationFrame(function () { self.animate(); });
+        },
+
+        updateUI: function () {
+          var pct = Math.round(this.currentValue * 100);
+          var revealPct = 100 - (this.currentValue * 100);
+          logoFill.style.clipPath = 'inset(0 ' + revealPct + '% 0 0)';
+          logoFill.style.webkitClipPath = 'inset(0 ' + revealPct + '% 0 0)';
+          progressValue.textContent = (this.currentValue * 100).toFixed(2) + '%';
+          if (currentDownloadSpeedBps > 0 && this.currentValue < 1) {
+            progressSpeed.textContent = 'Est. speed: ' + formatSpeed(currentDownloadSpeedBps);
+          } else {
+            progressSpeed.textContent = '';
+          }
+        },
+
+        setImmediate: function (value) {
+          this.currentValue = value;
+          this.targetValue = value;
+          this.updateUI();
+        }
+      };
+
+      function unityShowBanner(msg, type) {
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function() {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var buildQuery = "?v=" + buildVersion;
+      var loaderUrl = buildUrl + "/Builds.loader.js" + buildQuery;
+      var config = {
+        dataUrl: buildUrl + "/Builds.data.unityweb" + buildQuery,
+        frameworkUrl: buildUrl + "/Builds.framework.js.unityweb" + buildQuery,
+        codeUrl: buildUrl + "/Builds.wasm.unityweb" + buildQuery,
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "TMS",
+        productName: "GameVault2.0",
+        productVersion: "0.0.1",
+        showBanner: unityShowBanner,
+        cacheControl: function(url) {
+          if (url.endsWith('.mp4')) {
+            return "immutable";
+          }
+          if (url.includes('catalog') || url.endsWith('.hash')) {
+            return "must-revalidate";
+          }
+          if (url.endsWith('.bundle')) {
+            return "must-revalidate";
+          }
+          if (url.endsWith('.data.unityweb') ||
+              url.endsWith('.wasm.unityweb') ||
+              url.endsWith('.framework.js.unityweb')) {
+            return "must-revalidate";
+          }
+          return "no-store";
+        },
+      };
+
+      var meta = document.createElement('meta');
+      meta.name = 'viewport';
+      meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes, viewport-fit=cover';
+      document.getElementsByTagName('head')[0].appendChild(meta);
+
+      var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+      if (isMobile) {
+        container.className = "unity-mobile";
+      }
+
+      function resizeCanvas() {
+        if (isMobile) return;
+        var isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+
+        if (isFullscreen) {
+          var winW = window.innerWidth;
+          var winH = window.innerHeight;
+          var targetW, targetH;
+
+          if (winW / winH > 16 / 9) {
+            targetH = winH;
+            targetW = Math.round(targetH * 16 / 9);
+          } else {
+            targetW = winW;
+            targetH = Math.round(targetW * 9 / 16);
+          }
+
+          if (targetW > 1920) { targetW = 1920; targetH = 1080; }
+          if (targetH > 1080) { targetH = 1080; targetW = 1920; }
+
+          canvas.style.width = targetW + 'px';
+          canvas.style.height = targetH + 'px';
+        } else {
+          canvas.style.width = '100%';
+          canvas.style.height = '100%';
+        }
+
+        canvas.style.display = 'block';
+        canvas.style.margin = '0 auto';
+        container.style.display = 'flex';
+        container.style.alignItems = 'center';
+        container.style.justifyContent = 'center';
+      }
+
+      function restoreDesktopCanvasSize() {
+        if (isMobile) return;
+        resizeCanvas();
+      }
+
+      if (!isMobile) {
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        document.addEventListener('fullscreenchange', resizeCanvas);
+        document.addEventListener('webkitfullscreenchange', resizeCanvas);
+        document.addEventListener('mozfullscreenchange', resizeCanvas);
+        document.addEventListener('MSFullscreenChange', resizeCanvas);
+      }
+
+      loadingBar.style.display = "block";
+      smoothProgress.setImmediate(0);
+
+      /* ── iOS Safari detection (excludes Chrome/Firefox/Edge/Opera on iOS) ── */
+      var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      var isSafari = /^((?!chrome|android|crios|fxios|edgios|opios|mercury).)*safari/i.test(navigator.userAgent);
+      var isIOSSafari = isIOS && isSafari;
+      var isIOSStandalone = isIOS && (window.navigator.standalone === true);
+      var _iosGameStarted = false;
+
+      /* ── Compute --unity-height from visualViewport or innerHeight ── */
+      function updateUnityHeight() {
+        var h = (window.visualViewport && window.visualViewport.height)
+              ? window.visualViewport.height
+              : window.innerHeight;
+        document.documentElement.style.setProperty('--unity-height', h + 'px');
+        return h;
+      }
+
+      /* ── iOS Safari workaround setup ── */
+      if (isIOSSafari && !isIOSStandalone) {
+        document.documentElement.classList.add('ios-safari-fullscreen-workaround');
+        updateUnityHeight();
+
+        var iosSwipeHint = document.getElementById('ios-swipe-hint');
+
+        if (iosSwipeHint) iosSwipeHint.classList.add('show');
+
+        function preventScroll(e) { e.preventDefault(); }
+
+        function iosLockGame() {
+          if (_iosGameStarted) return;
+          _iosGameStarted = true;
+
+          if (iosSwipeHint) iosSwipeHint.classList.remove('show');
+
+          document.documentElement.classList.add('ios-game-started');
+
+          var h = updateUnityHeight();
+          container.style.height = h + 'px';
+          canvas.style.height = h + 'px';
+
+          window.scrollTo(0, 0);
+          hideLoaderFsHint();
+
+          if (!_unityLoaded) {
+            lockLoaderInput();
+            document.addEventListener('touchmove', preventScroll, { passive: false });
+            document.addEventListener('wheel', preventScroll, { passive: false });
+            window.addEventListener('scroll', function () { window.scrollTo(0, 0); });
+          }
+        }
+
+        window.addEventListener('scroll', function () {
+          if (!_iosGameStarted && window.scrollY > 10) {
+            setTimeout(iosLockGame, 400);
+          }
+        }, { passive: true });
+
+        window.addEventListener('resize', function () {
+          if (_iosGameStarted) {
+            var h = updateUnityHeight();
+            container.style.height = h + 'px';
+            canvas.style.height = h + 'px';
+          }
+        });
+
+        window.addEventListener('orientationchange', function () {
+          if (_iosGameStarted) {
+            setTimeout(function () {
+              var h = updateUnityHeight();
+              container.style.height = h + 'px';
+              canvas.style.height = h + 'px';
+            }, 200);
+          }
+        });
+
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', function () {
+            var h = updateUnityHeight();
+            if (_iosGameStarted) {
+              container.style.height = h + 'px';
+              canvas.style.height = h + 'px';
+            }
+          });
+          window.visualViewport.addEventListener('scroll', function () {
+            if (_iosGameStarted) updateUnityHeight();
+          });
+        }
+      }
+
+      /* ── Loader input lock: blocks all interaction while loader is visible ── */
+      var _loaderInputLocked = false;
+
+      var loaderShield = document.createElement('div');
+      loaderShield.id = 'loader-input-shield';
+      loaderShield.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:99996;background:transparent;';
+      document.body.appendChild(loaderShield);
+
+      function lockLoaderInput() {
+        if (_loaderInputLocked) return;
+        _loaderInputLocked = true;
+        loaderShield.style.display = 'block';
+      }
+
+      function unlockLoaderInput() {
+        _loaderInputLocked = false;
+        loaderShield.style.display = 'none';
+      }
+
+      /* ── Fullscreen for non-iOS-Safari browsers ── */
+      function requestFs() {
+        if (_maintenanceActive) return;
+        if (isIOSSafari) return;
+        var el = document.documentElement;
+        if (el.requestFullscreen) el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
+        else if (el.msRequestFullscreen) el.msRequestFullscreen();
+      }
+
+      function isFullscreen() {
+        if (isIOSStandalone) return true;
+        if (isIOSSafari) return _iosGameStarted;
+        return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+      }
+
+      /* ── Global click/touch handlers (non-iOS-Safari only) ── */
+      document.addEventListener('click', function () {
+        if (isIOSSafari) return;
+        var tag = document.activeElement && document.activeElement.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (!isFullscreen()) {
+          requestFs();
+          hideLoaderFsHint();
+          if (!_unityLoaded) lockLoaderInput();
+        }
+      });
+
+      document.addEventListener('touchend', function () {
+        if (isIOSSafari) return;
+        if (!isFullscreen()) {
+          requestFs();
+          hideLoaderFsHint();
+          if (!_unityLoaded) lockLoaderInput();
+        }
+      });
+
+      function startUnityGame() {
+        if (_maintenanceActive) return;
+
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onerror = function () {
+          showCasinoMaintenancePage();
+        };
+        script.onload = function () {
+          if (_maintenanceActive) return;
+          createUnityInstance(canvas, config, (progress) => {
+            if (_maintenanceActive) return;
+            var now = performance.now();
+            if (lastProgressTime > 0 && progress > lastProgressValue) {
+              var elapsed = (now - lastProgressTime) / 1000;
+              if (elapsed > 0) {
+                var deltaProgress = progress - lastProgressValue;
+                var estimatedBytes = deltaProgress * (totalDownloadBytes || 50000000);
+                currentDownloadSpeedBps = estimatedBytes / elapsed;
+              }
+            }
+            lastProgressTime = now;
+            lastProgressValue = progress;
+
+            smoothProgress.setTarget(progress);
+
+            if (progress >= 1) {
+              progressLabel.textContent = 'Starting...';
+            }
+          }).then((unityInstance) => {
+            if (_maintenanceActive) return;
+            window.unityInstance = unityInstance;
+            smoothProgress.setImmediate(1);
+            smoothProgress.stop();
+            loadingBar.style.display = "none";
+            _unityLoaded = true;
+            unlockLoaderInput();
+            if (typeof preventScroll === 'function') {
+              document.removeEventListener('touchmove', preventScroll);
+              document.removeEventListener('wheel', preventScroll);
+            }
+
+            ensureVideoAutoplay();
+            setTimeout(ensureVideoAutoplay, 500);
+            setTimeout(ensureVideoAutoplay, 1500);
+            var videoInterval = setInterval(ensureVideoAutoplay, 500);
+            setTimeout(function () { clearInterval(videoInterval); }, 5000);
+          }).catch(function () {
+            showCasinoMaintenancePage();
+          });
+        };
+        document.body.appendChild(script);
+      }
+
+      function ensureVideoAutoplay() {
+        var videos = document.querySelectorAll('video');
+        videos.forEach(function (video) {
+          if (video._autoplayHandled) return;
+          video.setAttribute('autoplay', '');
+          video.muted = true;
+          video.playsInline = true;
+
+          function tryPlay() {
+            if (video.readyState >= 2) {
+              video.play().catch(function () {});
+            } else {
+              setTimeout(tryPlay, 100);
+            }
+          }
+
+          video.addEventListener('loadeddata', function () { video.play().catch(function () {}); });
+          video.addEventListener('canplay', function () { video.play().catch(function () {}); });
+          video.addEventListener('loadedmetadata', function () { setTimeout(tryPlay, 100); });
+
+          tryPlay();
+          video._autoplayHandled = true;
+        });
+      }
+
+      window.ensureVideoAutoplay = ensureVideoAutoplay;
+
+      var videoObserver = new MutationObserver(function (mutations) {
+        mutations.forEach(function (mutation) {
+          mutation.addedNodes.forEach(function (node) {
+            if (node.nodeName === 'VIDEO') {
+              ensureVideoAutoplay();
+            } else if (node.querySelectorAll) {
+              var vids = node.querySelectorAll('video');
+              if (vids.length > 0) ensureVideoAutoplay();
+            }
+          });
+        });
+      });
+      videoObserver.observe(document.body, { childList: true, subtree: true });
+
+      if (isMobile) {
+        function hideUnityInput(el) {
+          el.setAttribute('readonly', 'readonly');
+          el.setAttribute('inputmode', 'none');
+          el.style.opacity = '0';
+          el.style.position = 'fixed';
+          el.style.top = '-9999px';
+          el.style.left = '-9999px';
+          el.style.width = '0';
+          el.style.height = '0';
+          el.style.padding = '0';
+          el.style.border = 'none';
+          el.style.outline = 'none';
+          el.style.pointerEvents = 'none';
+          el.style.zIndex = '-1';
+          el.blur();
+        }
+
+        var inputObserver = new MutationObserver(function (mutations) {
+          mutations.forEach(function (mutation) {
+            mutation.addedNodes.forEach(function (node) {
+              if (node.nodeType !== 1) return;
+              if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
+                hideUnityInput(node);
+              }
+              if (node.querySelectorAll) {
+                node.querySelectorAll('input, textarea').forEach(hideUnityInput);
+              }
+            });
+          });
+        });
+        inputObserver.observe(document.body, { childList: true, subtree: true });
+
+        document.querySelectorAll('input, textarea').forEach(hideUnityInput);
+
+        document.addEventListener('focusin', function (e) {
+          if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            hideUnityInput(e.target);
+          }
+        });
+      }
+
+      function copyTextToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(function () {
+            copyFallback(text);
+          });
+        } else {
+          copyFallback(text);
+        }
+      }
+
+      function copyFallback(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+
+      window.copyTextToClipboard = copyTextToClipboard;
+
+      function clearUnityCache() {
+        if (window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.UnityCache) {
+          window.unityInstance.Module.UnityCache.destroyInstance().then(function () {
+            window.location.reload();
+          }).catch(function () {
+            window.location.reload();
+          });
+        } else if ('caches' in window) {
+          caches.keys().then(function (names) {
+            names.forEach(function (name) {
+              if (name.includes('UnityCache') || name.includes('CasinoGame')) {
+                caches.delete(name);
+              }
+            });
+            window.location.reload();
+          }).catch(function () {
+            window.location.reload();
+          });
+        } else {
+          window.location.reload();
+        }
+      }
+
+      window.clearUnityCache = clearUnityCache;
+
+      var isLoggedIn = false;
+
+      var TOKEN_ENCRYPTION_KEY = 'GameVault2.02025!@#TokenKey';
+
+      function encryptToken(token) {
+        var result = '';
+        for (var i = 0; i < token.length; i++) {
+          result += String.fromCharCode(token.charCodeAt(i) ^ TOKEN_ENCRYPTION_KEY.charCodeAt(i % TOKEN_ENCRYPTION_KEY.length));
+        }
+        return btoa(result);
+      }
+
+      function decryptToken(encryptedToken) {
+        var decoded = atob(encryptedToken);
+        var result = '';
+        for (var i = 0; i < decoded.length; i++) {
+          result += String.fromCharCode(decoded.charCodeAt(i) ^ TOKEN_ENCRYPTION_KEY.charCodeAt(i % TOKEN_ENCRYPTION_KEY.length));
+        }
+        return result;
+      }
+
+      function storeEncryptedToken(token) {
+        try {
+          localStorage.setItem('unityTokenEncrypted', encryptToken(token));
+          localStorage.setItem('unityTokenTimestamp', Date.now().toString());
+        } catch (e) {}
+      }
+
+      function getStoredToken() {
+        try {
+          var encrypted = localStorage.getItem('unityTokenEncrypted');
+          if (encrypted) return decryptToken(encrypted);
+        } catch (e) {}
+        return null;
+      }
+
+      function clearStoredToken() {
+        try {
+          localStorage.removeItem('unityTokenEncrypted');
+          localStorage.removeItem('unityTokenTimestamp');
+        } catch (e) {}
+      }
+
+      function onTokenReceived(token) {
+        storeEncryptedToken(token);
+      }
+
+      function getToken() {
+        return getStoredToken();
+      }
+
+      function onLoginStatusChanged(isSuccess) {
+        if (typeof isSuccess === 'string') {
+          isLoggedIn = isSuccess.toLowerCase() === 'true';
+        } else {
+          isLoggedIn = !!isSuccess;
+        }
+        if (!isLoggedIn) {
+          clearStoredToken();
+        }
+        if (typeof updateFullscreenHintVisibility === 'function') {
+          updateFullscreenHintVisibility();
+        }
+      }
+
+      window.onLoginStatusChanged = onLoginStatusChanged;
+      window.onTokenReceived = onTokenReceived;
+      window.getToken = getToken;
+      window.clearStoredToken = clearStoredToken;
+
+      var loaderFsHint = document.getElementById("loader-fs-hint");
+      var __fsHintVisible = false;
+
+      var _unityLoaded = false;
+
+      function isMobileUA() {
+        return /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+          || (navigator.maxTouchPoints > 1 && /MacIntel/i.test(navigator.platform));
+      }
+
+      function showLoaderFsHint() {
+        if (!loaderFsHint) return;
+        if (_maintenanceActive) return;
+        if (isFullscreen()) return;
+        if (isIOSStandalone) return;
+        if (isIOSSafari) return;
+
+        var actionWord = isMobileUA() ? 'Tap' : 'Click';
+        var hintText = document.getElementById("loader-fs-hint-text");
+        if (hintText) {
+          hintText.innerHTML = '<span class="hint-tap">' + actionWord + '</span> <span class="hint-normal">anywhere for</span> <span class="hint-fs">Fullscreen</span>';
+        }
+
+        __fsHintVisible = true;
+        loaderFsHint.classList.add('show');
+      }
+
+      function hideLoaderFsHint() {
+        if (loaderFsHint) loaderFsHint.classList.remove('show');
+        __fsHintVisible = false;
+      }
+
+      function updateFullscreenHintVisibility() {
+        if (isFullscreen()) {
+          hideLoaderFsHint();
+        } else if (_unityLoaded) {
+          showLoaderFsHint();
+        }
+      }
+
+      document.addEventListener('fullscreenchange', updateFullscreenHintVisibility);
+      document.addEventListener('webkitfullscreenchange', updateFullscreenHintVisibility);
+      document.addEventListener('mozfullscreenchange', updateFullscreenHintVisibility);
+      document.addEventListener('MSFullscreenChange', updateFullscreenHintVisibility);
+
+      setTimeout(showLoaderFsHint, 300);
+
+      var rotateOverlay = document.getElementById("rotate-device");
+
+      function setVh() {
+        document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+      }
+
+      function checkOrientation() {
+        setVh();
+        var isMobileDevice =
+          (navigator.userAgentData && navigator.userAgentData.mobile === true) ||
+          /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+          (navigator.maxTouchPoints && navigator.maxTouchPoints > 1 && /MacIntel/i.test(navigator.platform));
+
+        if (_maintenanceActive) return;
+        if (isMobileDevice && window.innerHeight > window.innerWidth) {
+          rotateOverlay.classList.add("show");
+          if (loaderFsHint) loaderFsHint.classList.remove("show");
+          hideLoaderFsHint();
+          container.style.visibility = "hidden";
+          var iosHnt = document.getElementById('ios-swipe-hint');
+          if (iosHnt) iosHnt.classList.remove('show');
+        } else {
+          rotateOverlay.classList.remove("show");
+          container.style.visibility = "visible";
+          if (isIOSSafari && !isIOSStandalone) {
+            _iosGameStarted = false;
+            document.documentElement.classList.remove('ios-game-started');
+            document.documentElement.classList.add('ios-safari-fullscreen-workaround');
+            unlockLoaderInput();
+            if (typeof preventScroll === 'function') {
+              document.removeEventListener('touchmove', preventScroll);
+              document.removeEventListener('wheel', preventScroll);
+            }
+            var iosHnt2 = document.getElementById('ios-swipe-hint');
+            if (iosHnt2) iosHnt2.classList.add('show');
+          }
+          try { showLoaderFsHint(); } catch (e) {}
+        }
+      }
+
+      window.addEventListener("resize", checkOrientation);
+      window.addEventListener("orientationchange", checkOrientation);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", checkOrientation);
+      }
+      checkOrientation();
+
+      function getApiBase() {
+        return 'https://gamevault222.com';
+        if (window.CASINO_API_BASE) return window.CASINO_API_BASE;
+        var metaEl = document.querySelector('meta[name="casino-api-base"]');
+        if (metaEl && metaEl.content) return metaEl.content;
+        return window.location.origin;
+      }
+
+      var MAINTENANCE_HTML_KEY = 'casino-maintenance-html';
+      var MAINTENANCE_VERSION_KEY = 'casino-maintenance-html-version';
+
+      function removeLegacyMaintenanceCache() {
+        try {
+          var keysToRemove = [];
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (!k) continue;
+            if (k === MAINTENANCE_HTML_KEY || k === MAINTENANCE_VERSION_KEY) continue;
+            if (/^casino-maintenance-html/.test(k)) keysToRemove.push(k);
+          }
+          keysToRemove.forEach(function (k) { localStorage.removeItem(k); });
+        } catch (e) {}
+      }
+
+      function cacheMaintenanceHtml(html) {
+        try {
+          localStorage.setItem(MAINTENANCE_HTML_KEY, html);
+          localStorage.setItem(MAINTENANCE_VERSION_KEY, buildVersion);
+          removeLegacyMaintenanceCache();
+        } catch (e) {}
+      }
+
+      function clearMaintenanceHtmlCache() {
+        try {
+          localStorage.removeItem(MAINTENANCE_HTML_KEY);
+          localStorage.removeItem(MAINTENANCE_VERSION_KEY);
+          removeLegacyMaintenanceCache();
+        } catch (e) {}
+      }
+
+      function getCachedMaintenanceHtml() {
+        try {
+          var cachedVersion = localStorage.getItem(MAINTENANCE_VERSION_KEY);
+          if (cachedVersion !== buildVersion) {
+            clearMaintenanceHtmlCache();
+            return null;
+          }
+          return localStorage.getItem(MAINTENANCE_HTML_KEY);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function writeMaintenanceDocument(html) {
+        cacheMaintenanceHtml(html);
+        document.open();
+        document.write(html);
+        document.close();
+      }
+
+      function fetchMaintenanceHtml() {
+        var bust = encodeURIComponent(buildVersion);
+        return fetch('maintenance.html?v=' + bust, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        }).then(function (res) {
+          if (!res.ok) throw new Error('maintenance.html ' + res.status);
+          return res.text();
+        }).catch(function () {
+          return fetch('/casino-maintenance.html?v=' + bust, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache' }
+          }).then(function (res) {
+            if (!res.ok) throw new Error('casino-maintenance.html ' + res.status);
+            return res.text();
+          });
+        });
+      }
+
+      function loadMaintenanceHtml() {
+        return fetchMaintenanceHtml().then(function (html) {
+          cacheMaintenanceHtml(html);
+          return html;
+        }).catch(function () {
+          var cached = getCachedMaintenanceHtml();
+          if (cached) return cached;
+          throw new Error('no maintenance html');
+        });
+      }
+
+      function prefetchMaintenanceHtml() {
+        fetchMaintenanceHtml().then(function (html) {
+          cacheMaintenanceHtml(html);
+        }).catch(function () {});
+      }
+
+      function showCasinoMaintenancePage() {
+        _maintenanceActive = true;
+        loadingBar.style.display = 'none';
+        container.style.display = 'none';
+        if (typeof rotateOverlay !== 'undefined' && rotateOverlay) rotateOverlay.classList.remove('show');
+        hideLoaderFsHint();
+        var iosHnt = document.getElementById('ios-swipe-hint');
+        if (iosHnt) iosHnt.classList.remove('show');
+        document.documentElement.classList.remove('ios-safari-fullscreen-workaround');
+
+        if (isFullscreen()) {
+          if (document.exitFullscreen) document.exitFullscreen();
+          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+          else if (document.mozCancelFullScreen) document.mozCancelFullScreen();
+          else if (document.msExitFullscreen) document.msExitFullscreen();
+        }
+
+        loadMaintenanceHtml().then(writeMaintenanceDocument).catch(function () {
+          var cached = getCachedMaintenanceHtml();
+          if (cached) {
+            writeMaintenanceDocument(cached);
+            return;
+          }
+          writeMaintenanceDocument(
+            '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>' +
+            '<title>Game Vault — maintenance</title>' +
+            '<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+            'background:#12051f;padding:1rem}.w{max-width:32rem;text-align:center}' +
+            '.l img{width:min(42vw,320px);min-width:140px;height:auto}' +
+            '.p img{width:min(94vw,32rem);height:auto;display:block;margin-top:.5rem}' +
+            '</style></head><body><div class="w"><div class="l"><img src="TemplateData/unity-logo-light.png" ' +
+            'alt="Game Vault 2.0"/></div><div class="p"><img src="TemplateData/Under-Maintanence.png" ' +
+            'alt="Game is currently under maintenance"/></div></div></body></html>'
+          );
+        });
+      }
+
+      function parseMaintenanceRows(json) {
+        if (Array.isArray(json)) return json;
+        if (json && typeof json === 'object') {
+          var rows = json.data || json.items || json.rows || json.result || json.value;
+          if (Array.isArray(rows)) return rows;
+        }
+        return null;
+      }
+
+      function isMaintenanceRowActive(row) {
+        if (!row || typeof row !== 'object') return false;
+
+        var startRaw = row.start_time || row.startTime || row.StartTime;
+        var endRaw = row.end_time || row.endTime || row.EndTime;
+        if (startRaw == null || startRaw === '') return false;
+
+        var startDate = new Date(startRaw);
+        if (isNaN(startDate.getTime())) return false;
+        if (Date.now() < startDate.getTime()) return false;
+
+        if (endRaw == null || endRaw === '') return true;
+
+        var endDate = new Date(endRaw);
+        if (isNaN(endDate.getTime())) return true;
+        return Date.now() < endDate.getTime();
+      }
+
+      function isCasinoMaintenanceActive(json) {
+        var rows = parseMaintenanceRows(json);
+        if (!rows) return false;
+
+        for (var i = 0; i < rows.length; i++) {
+          var r = rows[i];
+          var mtype = r.maintenance_type || r.maintenanceType || r.MaintenanceType || '';
+          if (!/^(backend|games?)$/i.test(String(mtype).trim())) continue;
+          if (isMaintenanceRowActive(r)) return true;
+        }
+        return false;
+      }
+
+      function checkMaintenance() {
+        var base = getApiBase();
+        var cacheBust = '_cb=' + Date.now();
+
+        fetch(base + '/api/maintenance?' + cacheBust, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          },
+          cache: 'no-store',
+          mode: 'cors',
+          credentials: 'omit'
+        }).then(function (res) {
+          if (res.status !== 200) {
+            showCasinoMaintenancePage();
+            return;
+          }
+          return res.json().then(function (json) {
+            if (isCasinoMaintenanceActive(json)) {
+              showCasinoMaintenancePage();
+            } else {
+              startUnityGame();
+            }
+          }).catch(function () {
+            showCasinoMaintenancePage();
+          });
+        }).catch(function () {
+          showCasinoMaintenancePage();
+        });
+      }
+
+      prefetchMaintenanceHtml();
+      checkMaintenance();
+
+    </script>
+  </body>
+</html>
