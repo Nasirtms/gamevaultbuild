@@ -368,10 +368,28 @@
       var _maintenanceActive = false;
       var buildVersion = "1778929172191";
 
-      var totalDownloadBytes = 0;
-      var lastProgressTime = 0;
-      var lastProgressValue = 0;
       var currentDownloadSpeedBps = 0;
+      var lastByteProgressTime = 0;
+      var lastByteProgressLoaded = 0;
+      var _buildFetchTrackerInstalled = false;
+      var _nativeFetch = window.fetch.bind(window);
+      var _unityEngineStarting = false;
+
+      var BUILD_DOWNLOAD_ASSETS = [
+        { key: 'data', suffix: 'Builds.data.unityweb', fallbackSize: 21249656 },
+        { key: 'framework', suffix: 'Builds.framework.js.unityweb', fallbackSize: 92578 },
+        { key: 'wasm', suffix: 'Builds.wasm.unityweb', fallbackSize: 14366140 }
+      ];
+
+      var buildDownloads = {};
+      BUILD_DOWNLOAD_ASSETS.forEach(function (asset) {
+        buildDownloads[asset.key] = {
+          loaded: 0,
+          total: asset.fallbackSize,
+          done: false,
+          activeFetches: 0
+        };
+      });
 
       function formatSpeed(bytesPerSecond) {
         if (bytesPerSecond <= 0) return '';
@@ -380,92 +398,232 @@
         return bytesPerSecond.toFixed(0) + ' B/s';
       }
 
-      /* Unity may report progress=1 while WASM is still compiling; cap UI until .then() */
-      var LOADER_DISPLAY_MAX = 0.99;
-
-      function unityProgressToDisplay(progress) {
-        var p = Math.min(1, Math.max(0, progress));
-        if (p >= 1) return LOADER_DISPLAY_MAX;
-        return p;
+      function matchBuildDownloadKey(url) {
+        try {
+          var path = new URL(url, document.URL).pathname;
+          for (var i = 0; i < BUILD_DOWNLOAD_ASSETS.length; i++) {
+            if (path.endsWith(BUILD_DOWNLOAD_ASSETS[i].suffix)) {
+              return BUILD_DOWNLOAD_ASSETS[i].key;
+            }
+          }
+        } catch (e) {}
+        return null;
       }
 
-      var smoothProgress = {
-        currentValue: 0,
-        targetValue: 0,
-        animationFrameId: null,
-        isAnimating: false,
-        lastUpdateTime: 0,
-        minUpdateInterval: 16,
+      function getBuildDownloadTotals() {
+        var loaded = 0;
+        var total = 0;
+        var allDone = true;
+        for (var i = 0; i < BUILD_DOWNLOAD_ASSETS.length; i++) {
+          var key = BUILD_DOWNLOAD_ASSETS[i].key;
+          var file = buildDownloads[key];
+          var fileTotal = file.total > 0 ? file.total : BUILD_DOWNLOAD_ASSETS[i].fallbackSize;
+          var fileLoaded = file.done ? fileTotal : Math.min(file.loaded, fileTotal);
+          loaded += fileLoaded;
+          total += fileTotal;
+          if (!file.done) allDone = false;
+        }
+        return { loaded: loaded, total: total, allDone: allDone };
+      }
 
-        start: function () {
-          if (!this.isAnimating) {
-            this.isAnimating = true;
-            this.lastUpdateTime = performance.now();
-            this.animate();
-          }
-        },
+      function getByteDownloadRatio() {
+        var totals = getBuildDownloadTotals();
+        if (totals.total <= 0) return 0;
+        var ratio = totals.loaded / totals.total;
+        if (!totals.allDone) {
+          return Math.min(ratio, 0.9999);
+        }
+        return 1;
+      }
 
-        stop: function () {
-          this.isAnimating = false;
-          if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-          }
-        },
+      var loaderProgress = {
+        displayRatio: 0,
 
-        setTarget: function (value) {
-          value = Math.min(1, Math.max(0, value));
-          this.targetValue = value;
-          if (this.currentValue > this.targetValue) {
-            this.currentValue = this.targetValue;
-            this.updateUI();
-          }
-          if (!this.isAnimating) this.start();
-        },
-
-        animate: function () {
-          if (!this.isAnimating) return;
-          var now = performance.now();
-          if (now - this.lastUpdateTime >= this.minUpdateInterval) {
-            var difference = this.targetValue - this.currentValue;
-            if (Math.abs(difference) < 0.0005) {
-              this.currentValue = this.targetValue;
-              this.updateUI();
-              this.stop();
-              return;
-            }
-            var speed = 0.06 + (Math.abs(difference) * 0.04);
-            if (speed > 0.14) speed = 0.14;
-            this.currentValue += difference * speed;
-            if (this.currentValue > this.targetValue) {
-              this.currentValue = this.targetValue;
-            }
-            this.updateUI();
-            this.lastUpdateTime = now;
-          }
-          var self = this;
-          this.animationFrameId = requestAnimationFrame(function () { self.animate(); });
-        },
-
-        updateUI: function () {
-          var revealPct = 100 - (this.currentValue * 100);
+        apply: function () {
+          var ratio = this.displayRatio;
+          var revealPct = 100 - (ratio * 100);
           logoFill.style.clipPath = 'inset(0 ' + revealPct + '% 0 0)';
           logoFill.style.webkitClipPath = 'inset(0 ' + revealPct + '% 0 0)';
-          progressValue.textContent = (this.currentValue * 100).toFixed(2) + '%';
-          if (currentDownloadSpeedBps > 0 && this.currentValue < LOADER_DISPLAY_MAX) {
+          progressValue.textContent = (ratio * 100).toFixed(2) + '%';
+          if (currentDownloadSpeedBps > 0 && ratio < 1) {
             progressSpeed.textContent = 'Est. speed: ' + formatSpeed(currentDownloadSpeedBps);
           } else {
             progressSpeed.textContent = '';
           }
         },
 
-        setImmediate: function (value) {
-          this.stop();
-          this.currentValue = Math.min(1, Math.max(0, value));
-          this.targetValue = this.currentValue;
-          this.updateUI();
+        updateFromBytes: function () {
+          var totals = getBuildDownloadTotals();
+          var now = performance.now();
+          if (lastByteProgressTime > 0 && totals.loaded > lastByteProgressLoaded) {
+            var elapsed = (now - lastByteProgressTime) / 1000;
+            if (elapsed > 0) {
+              currentDownloadSpeedBps = (totals.loaded - lastByteProgressLoaded) / elapsed;
+            }
+          }
+          lastByteProgressTime = now;
+          lastByteProgressLoaded = totals.loaded;
+
+          this.displayRatio = getByteDownloadRatio();
+          if (_unityEngineStarting && totals.allDone) {
+            progressLabel.textContent = 'Starting...';
+          } else {
+            progressLabel.textContent = 'LOADING';
+          }
+          this.apply();
+        },
+
+        setComplete: function () {
+          this.displayRatio = 1;
+          this.apply();
+        },
+
+        reset: function () {
+          this.displayRatio = 0;
+          lastByteProgressTime = 0;
+          lastByteProgressLoaded = 0;
+          currentDownloadSpeedBps = 0;
+          _unityEngineStarting = false;
+          BUILD_DOWNLOAD_ASSETS.forEach(function (asset) {
+            buildDownloads[asset.key].loaded = 0;
+            buildDownloads[asset.key].done = false;
+            buildDownloads[asset.key].activeFetches = 0;
+          });
+          this.apply();
         }
       };
+
+      function estimateCompressedTotal(response, fallbackTotal) {
+        var headerTotal = parseInt(response.headers.get('Content-Length') || '0', 10);
+        if (headerTotal > 0) return headerTotal;
+        var encoding = response.headers.get('Content-Encoding');
+        if (encoding === 'br' && fallbackTotal > 0) {
+          return Math.min(Math.round(fallbackTotal * 0.45), 536870912);
+        }
+        if (encoding === 'gzip' && fallbackTotal > 0) {
+          return Math.min(Math.round(fallbackTotal * 0.35), 536870912);
+        }
+        return fallbackTotal;
+      }
+
+      function trackBuildResponseBody(key, response) {
+        var file = buildDownloads[key];
+        var asset = BUILD_DOWNLOAD_ASSETS.filter(function (a) { return a.key === key; })[0];
+        var fallbackTotal = asset ? asset.fallbackSize : 0;
+        var expectedTotal = estimateCompressedTotal(response, fallbackTotal);
+        if (expectedTotal > 0) {
+          file.total = expectedTotal;
+        }
+
+        if (!response.body) {
+          file.loaded = file.total;
+          file.done = true;
+          file.activeFetches = Math.max(0, file.activeFetches - 1);
+          loaderProgress.updateFromBytes();
+          return response;
+        }
+
+        var reader = response.body.getReader();
+        var stream = new ReadableStream({
+          start: function (controller) {
+            function pump() {
+              return reader.read().then(function (result) {
+                if (result.done) {
+                  file.loaded = file.total > 0 ? file.total : file.loaded;
+                  file.done = true;
+                  file.activeFetches = Math.max(0, file.activeFetches - 1);
+                  loaderProgress.updateFromBytes();
+                  controller.close();
+                  return;
+                }
+                file.loaded += result.value.byteLength;
+                if (file.total > 0 && file.loaded > file.total) {
+                  file.total = file.loaded;
+                }
+                loaderProgress.updateFromBytes();
+                controller.enqueue(result.value);
+                return pump();
+              }).catch(function (err) {
+                file.activeFetches = Math.max(0, file.activeFetches - 1);
+                controller.error(err);
+                throw err;
+              });
+            }
+            return pump();
+          }
+        });
+
+        return new Response(stream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers
+        });
+      }
+
+      function installBuildDownloadTracker() {
+        if (_buildFetchTrackerInstalled) return;
+        _buildFetchTrackerInstalled = true;
+        window.fetch = function (input, init) {
+          var reqUrl = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+          var method = (init && init.method) || (input && input.method) || 'GET';
+          var key = matchBuildDownloadKey(reqUrl);
+          if (!key || method.toUpperCase() !== 'GET') {
+            return _nativeFetch(input, init);
+          }
+
+          var file = buildDownloads[key];
+          file.loaded = 0;
+          file.activeFetches += 1;
+          file.done = false;
+
+          return _nativeFetch(input, init).then(function (response) {
+            if (!response || !response.ok) {
+              file.activeFetches = Math.max(0, file.activeFetches - 1);
+              return response;
+            }
+            return trackBuildResponseBody(key, response);
+          }).catch(function (err) {
+            file.activeFetches = Math.max(0, file.activeFetches - 1);
+            throw err;
+          });
+        };
+      }
+
+      function checkCachedBuildFiles() {
+        if (!window.caches) return Promise.resolve();
+        var cacheName = 'UnityCache_' + config.companyName + '_' + config.productName;
+        return caches.open(cacheName).then(function (cache) {
+          return Promise.all(BUILD_DOWNLOAD_ASSETS.map(function (asset) {
+            var url = new URL(buildUrl + '/' + asset.suffix + buildQuery, document.URL).href;
+            return cache.match(url).then(function (response) {
+              if (!response) return;
+              var size = parseInt(response.headers.get('Content-Length') || '0', 10);
+              if (size <= 0) size = asset.fallbackSize;
+              var file = buildDownloads[asset.key];
+              file.total = size;
+              file.loaded = size;
+              file.done = true;
+            });
+          }));
+        }).catch(function () {});
+      }
+
+      function probeBuildFileSizes() {
+        return Promise.all(BUILD_DOWNLOAD_ASSETS.map(function (asset) {
+          var url = buildUrl + '/' + asset.suffix + buildQuery;
+          return _nativeFetch(url, { method: 'HEAD', cache: 'no-cache' }).then(function (response) {
+            if (!response.ok) return;
+            var size = parseInt(response.headers.get('Content-Length') || '0', 10);
+            if (size > 0) {
+              buildDownloads[asset.key].total = size;
+            }
+          }).catch(function () {});
+        })).then(function () {
+          return checkCachedBuildFiles();
+        }).then(function () {
+          loaderProgress.updateFromBytes();
+        });
+      }
 
       function unityShowBanner(msg, type) {
         function updateBannerVisibility() {
@@ -575,8 +733,9 @@
         document.addEventListener('MSFullscreenChange', resizeCanvas);
       }
 
+      installBuildDownloadTracker();
       loadingBar.style.display = "block";
-      smoothProgress.setImmediate(0);
+      loaderProgress.reset();
 
       /* ── iOS Safari detection (excludes Chrome/Firefox/Edge/Opera on iOS) ── */
       var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -727,57 +886,47 @@
       function startUnityGame() {
         if (_maintenanceActive) return;
 
-        var script = document.createElement("script");
-        script.src = loaderUrl;
-        script.onerror = function () {
-          showCasinoMaintenancePage();
-        };
-        script.onload = function () {
+        loaderProgress.reset();
+        probeBuildFileSizes().finally(function () {
           if (_maintenanceActive) return;
-          createUnityInstance(canvas, config, (progress) => {
-            if (_maintenanceActive) return;
-            var now = performance.now();
-            if (lastProgressTime > 0 && progress > lastProgressValue) {
-              var elapsed = (now - lastProgressTime) / 1000;
-              if (elapsed > 0) {
-                var deltaProgress = progress - lastProgressValue;
-                var estimatedBytes = deltaProgress * (totalDownloadBytes || 50000000);
-                currentDownloadSpeedBps = estimatedBytes / elapsed;
-              }
-            }
-            lastProgressTime = now;
-            lastProgressValue = progress;
 
-            smoothProgress.setTarget(unityProgressToDisplay(progress));
-
-            if (progress >= 1) {
-              progressLabel.textContent = 'Starting...';
-            } else {
-              progressLabel.textContent = 'LOADING';
-            }
-          }).then((unityInstance) => {
-            if (_maintenanceActive) return;
-            window.unityInstance = unityInstance;
-            smoothProgress.setImmediate(1);
-            smoothProgress.stop();
-            loadingBar.style.display = "none";
-            _unityLoaded = true;
-            unlockLoaderInput();
-            if (typeof preventScroll === 'function') {
-              document.removeEventListener('touchmove', preventScroll);
-              document.removeEventListener('wheel', preventScroll);
-            }
-
-            ensureVideoAutoplay();
-            setTimeout(ensureVideoAutoplay, 500);
-            setTimeout(ensureVideoAutoplay, 1500);
-            var videoInterval = setInterval(ensureVideoAutoplay, 500);
-            setTimeout(function () { clearInterval(videoInterval); }, 5000);
-          }).catch(function () {
+          var script = document.createElement("script");
+          script.src = loaderUrl;
+          script.onerror = function () {
             showCasinoMaintenancePage();
-          });
-        };
-        document.body.appendChild(script);
+          };
+          script.onload = function () {
+            if (_maintenanceActive) return;
+            createUnityInstance(canvas, config, function (progress) {
+              if (_maintenanceActive) return;
+              var totals = getBuildDownloadTotals();
+              if (totals.allDone && progress >= 0.9) {
+                _unityEngineStarting = true;
+                loaderProgress.updateFromBytes();
+              }
+            }).then(function (unityInstance) {
+              if (_maintenanceActive) return;
+              window.unityInstance = unityInstance;
+              loaderProgress.setComplete();
+              loadingBar.style.display = "none";
+              _unityLoaded = true;
+              unlockLoaderInput();
+              if (typeof preventScroll === 'function') {
+                document.removeEventListener('touchmove', preventScroll);
+                document.removeEventListener('wheel', preventScroll);
+              }
+
+              ensureVideoAutoplay();
+              setTimeout(ensureVideoAutoplay, 500);
+              setTimeout(ensureVideoAutoplay, 1500);
+              var videoInterval = setInterval(ensureVideoAutoplay, 500);
+              setTimeout(function () { clearInterval(videoInterval); }, 5000);
+            }).catch(function () {
+              showCasinoMaintenancePage();
+            });
+          };
+          document.body.appendChild(script);
+        });
       }
 
       function ensureVideoAutoplay() {
