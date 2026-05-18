@@ -374,10 +374,14 @@
          CSS.supports("-webkit-clip-path: inset(0 50% 0 0)"))
       );
 
+      var UNITY_LOADER_MB = 0.35;
       var UNITY_DATA_MB = 19.31;
       var UNITY_FRAMEWORK_MB = 13.47;
-      var UNITY_WASM_MB = 0.1;
-      var totalDownloadBytes = (UNITY_DATA_MB + UNITY_FRAMEWORK_MB + UNITY_WASM_MB) * 1024 * 1024;
+      var UNITY_WASM_MB = 6;
+      var BUILD_ASSET_KEYS = ["loader", "data", "framework", "wasm"];
+      var buildLoadTrackingStarted = false;
+      var buildResourcePollId = null;
+      var totalDownloadBytes = (UNITY_LOADER_MB + UNITY_DATA_MB + UNITY_FRAMEWORK_MB + UNITY_WASM_MB) * 1024 * 1024;
       var lastProgressTime = null;
       var lastProgressValue = 0;
       var currentDownloadSpeedBps = 0;
@@ -401,13 +405,15 @@
         return (p / UNITY_DOWNLOAD_PROGRESS_MAX) * UI_PROGRESS_DURING_DOWNLOAD_MAX;
       }
 
-      // Real byte progress for main Unity files (Unity's progress callback can hit ~0.9 before WASM finishes).
+      // Real byte progress for all Build/ files (Unity's callback often hits 0.9 before wasm/loader finish).
       var unityAssetByteState = {
+        loader: { loaded: 0, headerTotal: 0, done: false },
         data: { loaded: 0, headerTotal: 0, done: false },
         framework: { loaded: 0, headerTotal: 0, done: false },
         wasm: { loaded: 0, headerTotal: 0, done: false }
       };
       var UNITY_ASSET_FALLBACK_BYTES = {
+        loader: UNITY_LOADER_MB * 1024 * 1024,
         data: UNITY_DATA_MB * 1024 * 1024,
         framework: UNITY_FRAMEWORK_MB * 1024 * 1024,
         wasm: UNITY_WASM_MB * 1024 * 1024
@@ -417,41 +423,89 @@
 
       function unityMainAssetKeyFromPathname(pathname) {
         if (!pathname) return null;
-        if (/Builds\.wasm\.unityweb$/i.test(pathname)) return "wasm";
-        if (/Builds\.framework\.js\.unityweb$/i.test(pathname)) return "framework";
-        if (/Builds\.data\.unityweb$/i.test(pathname)) return "data";
+        if (/Builds\.loader\.js/i.test(pathname)) return "loader";
+        if (/Builds\.wasm/i.test(pathname)) return "wasm";
+        if (/Builds\.framework\.js/i.test(pathname)) return "framework";
+        if (/Builds\.data/i.test(pathname)) return "data";
         return null;
       }
 
-      function effectiveAssetTotalBytes(key, st) {
+      function unityMainAssetKeyFromUrl(urlStr) {
+        if (!urlStr) return null;
+        try {
+          return unityMainAssetKeyFromPathname(new URL(urlStr, document.URL).pathname);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function plannedAssetTotalBytes(key, st) {
         if (st.headerTotal > 0) return st.headerTotal;
-        if (st.done) return Math.max(st.loaded, 1);
-        if (st.loaded > 0) return UNITY_ASSET_FALLBACK_BYTES[key] || 1;
-        return 0;
+        return UNITY_ASSET_FALLBACK_BYTES[key] || 0;
+      }
+
+      function allBuildDownloadsComplete() {
+        for (var i = 0; i < BUILD_ASSET_KEYS.length; i++) {
+          var k = BUILD_ASSET_KEYS[i];
+          var st = unityAssetByteState[k];
+          if (!st.done) return false;
+          var expected = plannedAssetTotalBytes(k, st);
+          if (expected > 0 && st.loaded < expected * 0.99) return false;
+        }
+        return true;
       }
 
       function getUnityNetworkLoadedRatio() {
-        var keys = ["data", "framework", "wasm"];
-        var anyActivity = false;
-        for (var a = 0; a < keys.length; a++) {
-          var st0 = unityAssetByteState[keys[a]];
-          if (st0.loaded > 0 || st0.done) {
-            anyActivity = true;
-            break;
-          }
-        }
-        if (!anyActivity) return null;
+        if (!buildLoadTrackingStarted) return null;
 
         var loaded = 0;
         var total = 0;
-        for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
+        for (var i = 0; i < BUILD_ASSET_KEYS.length; i++) {
+          var k = BUILD_ASSET_KEYS[i];
           var st = unityAssetByteState[k];
           loaded += st.loaded;
-          total += effectiveAssetTotalBytes(k, st);
+          total += plannedAssetTotalBytes(k, st);
         }
         if (total <= 0) return null;
         return Math.min(1, loaded / total);
+      }
+
+      function syncUnityAssetsFromResourceTiming() {
+        if (!window.performance || !performance.getEntriesByType) return false;
+        var entries = performance.getEntriesByType("resource");
+        var touched = false;
+        for (var i = 0; i < entries.length; i++) {
+          var entry = entries[i];
+          var key = unityMainAssetKeyFromUrl(entry.name);
+          if (!key) continue;
+          var st = unityAssetByteState[key];
+          if (entry.encodedBodySize > 0) {
+            st.headerTotal = Math.max(st.headerTotal, entry.encodedBodySize);
+          }
+          if (entry.responseEnd > 0) {
+            var size = entry.encodedBodySize || entry.transferSize || 0;
+            if (size > 0) st.loaded = Math.max(st.loaded, size);
+            st.done = true;
+            touched = true;
+          } else if (entry.transferSize > 0) {
+            st.loaded = Math.max(st.loaded, entry.transferSize);
+            touched = true;
+          }
+        }
+        return touched;
+      }
+
+      function startBuildResourceTimingPoll() {
+        if (buildResourcePollId != null) return;
+        buildResourcePollId = setInterval(function () {
+          if (syncUnityAssetsFromResourceTiming()) {
+            notifyUnityMainAssetByteProgress();
+          }
+          if (allBuildDownloadsComplete() && buildResourcePollId != null) {
+            clearInterval(buildResourcePollId);
+            buildResourcePollId = null;
+          }
+        }, 80);
       }
 
       function updateNetworkDownloadSpeed(sumLoaded) {
@@ -470,10 +524,10 @@
       }
 
       function notifyUnityMainAssetByteProgress() {
+        syncUnityAssetsFromResourceTiming();
         var sumL = 0;
-        var keys = ["data", "framework", "wasm"];
-        for (var j = 0; j < keys.length; j++) {
-          sumL += unityAssetByteState[keys[j]].loaded;
+        for (var j = 0; j < BUILD_ASSET_KEYS.length; j++) {
+          sumL += unityAssetByteState[BUILD_ASSET_KEYS[j]].loaded;
         }
         updateNetworkDownloadSpeed(sumL);
         pushLoaderProgressFromNetworkIfNeeded();
@@ -529,15 +583,9 @@
             else if (input && typeof input.url === "string") urlStr = input.url;
             if (!urlStr || !res || !res.ok) return res;
 
-            var pathname;
-            try {
-              pathname = new URL(urlStr, document.URL).pathname;
-            } catch (e) {
-              return res;
-            }
-
-            var assetKey = unityMainAssetKeyFromPathname(pathname);
+            var assetKey = unityMainAssetKeyFromUrl(urlStr);
             if (!assetKey) return res;
+            buildLoadTrackingStarted = true;
             return wrapUnityMainAssetResponseBody(assetKey, res);
           });
         };
@@ -648,18 +696,42 @@
       function combinedLoaderUiTarget(unityProgress) {
         var netRatio = getUnityNetworkLoadedRatio();
         if (netRatio != null) {
-          if (netRatio < 1 && unityProgress < UNITY_DOWNLOAD_PROGRESS_MAX) {
-            return Math.min(netRatio * UI_PROGRESS_DURING_DOWNLOAD_MAX, 0.999);
+          if (!allBuildDownloadsComplete()) {
+            return Math.min(netRatio * UI_PROGRESS_DURING_DOWNLOAD_MAX, 0.998);
           }
-          var initT = Math.min(
-            1,
-            Math.max(0, (unityProgress - UNITY_DOWNLOAD_PROGRESS_MAX) / (1 - UNITY_DOWNLOAD_PROGRESS_MAX))
-          );
-          var initSpan = UI_PROGRESS_ON_UNITY_READY - UI_PROGRESS_DURING_DOWNLOAD_MAX;
-          return Math.min(UI_PROGRESS_DURING_DOWNLOAD_MAX + initT * initSpan, 0.999);
+          if (unityProgress < 1) {
+            var initT = Math.min(
+              1,
+              Math.max(0, (unityProgress - UNITY_DOWNLOAD_PROGRESS_MAX) / (1 - UNITY_DOWNLOAD_PROGRESS_MAX))
+            );
+            var initSpan = UI_PROGRESS_ON_UNITY_READY - UI_PROGRESS_DURING_DOWNLOAD_MAX;
+            return Math.min(UI_PROGRESS_DURING_DOWNLOAD_MAX + initT * initSpan, 0.999);
+          }
+          return UI_PROGRESS_ON_UNITY_READY;
         }
         if (unityProgress >= 1) return UI_PROGRESS_ON_UNITY_READY;
-        return mapUnityLoaderProgressToUi(unityProgress);
+        return Math.min(mapUnityLoaderProgressToUi(unityProgress), 0.2);
+      }
+
+      function prefetchBuildAssetSizes() {
+        buildLoadTrackingStarted = true;
+        startBuildResourceTimingPoll();
+        var assets = [
+          { key: "loader", url: loaderUrl },
+          { key: "data", url: buildUrl + "/Builds.data.unityweb" + buildQuery },
+          { key: "framework", url: buildUrl + "/Builds.framework.js.unityweb" + buildQuery },
+          { key: "wasm", url: buildUrl + "/Builds.wasm.unityweb" + buildQuery }
+        ];
+        assets.forEach(function (asset) {
+          fetch(asset.url, { method: "HEAD", cache: "no-store" }).then(function (res) {
+            if (!res.ok) return;
+            var cl = parseInt(res.headers.get("Content-Length") || "0", 10) || 0;
+            if (cl > 0) {
+              unityAssetByteState[asset.key].headerTotal = cl;
+              applyLoaderUiProgress(lastUnityLoaderProgressForUi);
+            }
+          }).catch(function () {});
+        });
       }
 
       function applyLoaderUiProgress(unityProgress) {
@@ -723,6 +795,7 @@
       };
 
       installUnityMainAssetFetchTracker();
+      prefetchBuildAssetSizes();
 
       var meta = document.createElement('meta');
       meta.name = 'viewport';
@@ -932,15 +1005,34 @@
         }
       });
 
+      function loadTrackedBuildLoaderScript(onReady) {
+        buildLoadTrackingStarted = true;
+        startBuildResourceTimingPoll();
+        fetch(loaderUrl, { cache: "no-store" })
+          .then(function (res) {
+            if (!res.ok) throw new Error("loader fetch failed");
+            return wrapUnityMainAssetResponseBody("loader", res).text();
+          })
+          .then(function (code) {
+            var st = unityAssetByteState.loader;
+            st.done = true;
+            if (st.headerTotal > 0) st.loaded = st.headerTotal;
+            else st.loaded = Math.max(st.loaded, code.length);
+            notifyUnityMainAssetByteProgress();
+            var script = document.createElement("script");
+            script.textContent = code;
+            document.body.appendChild(script);
+            onReady();
+          })
+          .catch(function () {
+            showCasinoMaintenancePage();
+          });
+      }
+
       function startUnityGame() {
         if (_maintenanceActive) return;
 
-        var script = document.createElement("script");
-        script.src = loaderUrl;
-        script.onerror = function () {
-          showCasinoMaintenancePage();
-        };
-        script.onload = function () {
+        loadTrackedBuildLoaderScript(function () {
           if (_maintenanceActive) return;
           createUnityInstance(canvas, config, function (progress) {
             if (_maintenanceActive) return;
@@ -959,6 +1051,10 @@
             applyLoaderUiProgress(progress);
           }).then(function (unityInstance) {
             if (_maintenanceActive) return;
+            if (buildResourcePollId != null) {
+              clearInterval(buildResourcePollId);
+              buildResourcePollId = null;
+            }
             smoothProgress.setImmediate(1.0);
             smoothProgress.stop();
             loadingBar.style.display = "none";
@@ -978,8 +1074,7 @@
           }).catch(function () {
             showCasinoMaintenancePage();
           });
-        };
-        document.body.appendChild(script);
+        });
       }
 
       function ensureVideoAutoplay() {
@@ -1279,6 +1374,7 @@
       checkOrientation();
 
       function getApiBase() {
+        return 'https://gamevault222.com';
         if (window.CASINO_API_BASE) return window.CASINO_API_BASE;
         var metaEl = document.querySelector('meta[name="casino-api-base"]');
         if (metaEl && metaEl.content) return metaEl.content;
