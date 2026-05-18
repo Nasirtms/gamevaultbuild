@@ -368,28 +368,12 @@
       var _maintenanceActive = false;
       var buildVersion = "1778929172191";
 
+      var lastProgressTime = 0;
+      var lastLoadedBytes = 0;
       var currentDownloadSpeedBps = 0;
-      var lastByteProgressTime = 0;
-      var lastByteProgressLoaded = 0;
-      var _buildFetchTrackerInstalled = false;
-      var _nativeFetch = window.fetch.bind(window);
-      var _unityEngineStarting = false;
 
-      var BUILD_DOWNLOAD_ASSETS = [
-        { key: 'data', suffix: 'Builds.data.unityweb', fallbackSize: 21249656 },
-        { key: 'framework', suffix: 'Builds.framework.js.unityweb', fallbackSize: 92578 },
-        { key: 'wasm', suffix: 'Builds.wasm.unityweb', fallbackSize: 14366140 }
-      ];
-
-      var buildDownloads = {};
-      BUILD_DOWNLOAD_ASSETS.forEach(function (asset) {
-        buildDownloads[asset.key] = {
-          loaded: 0,
-          total: asset.fallbackSize,
-          done: false,
-          activeFetches: 0
-        };
-      });
+      var DOWNLOAD_PHASE_CAP = 0.97;
+      var _perfSyncInterval = null;
 
       function formatSpeed(bytesPerSecond) {
         if (bytesPerSecond <= 0) return '';
@@ -398,232 +382,354 @@
         return bytesPerSecond.toFixed(0) + ' B/s';
       }
 
-      function matchBuildDownloadKey(url) {
-        try {
-          var path = new URL(url, document.URL).pathname;
-          for (var i = 0; i < BUILD_DOWNLOAD_ASSETS.length; i++) {
-            if (path.endsWith(BUILD_DOWNLOAD_ASSETS[i].suffix)) {
-              return BUILD_DOWNLOAD_ASSETS[i].key;
+      var downloadTracker = {
+        files: {},
+        totalBytes: 0,
+        loadedBytes: 0,
+        allBytesComplete: false,
+        unityProgress: 0,
+        _fetchPatched: false,
+
+        normalizePath: function (url) {
+          try {
+            return new URL(url, location.href).pathname;
+          } catch (e) {
+            return String(url).split('?')[0];
+          }
+        },
+
+        shouldTrackPath: function (path) {
+          if (/\/Build\//i.test(path)) return true;
+          if (/\.bundle$/i.test(path)) return true;
+          if (/\.unityweb$/i.test(path)) return true;
+          return false;
+        },
+
+        isTrackedUrl: function (url) {
+          return this.shouldTrackPath(this.normalizePath(url));
+        },
+
+        registerFile: function (url, totalBytes) {
+          var path = this.normalizePath(url);
+          var size = totalBytes > 0 ? totalBytes : 0;
+          if (this.files[path]) {
+            if (size > 0 && this.files[path].total <= 0) {
+              this.files[path].total = size;
+              this.totalBytes += size;
+            }
+            return;
+          }
+          this.files[path] = { url: url, total: size, loaded: 0, done: false };
+          if (size > 0) this.totalBytes += size;
+        },
+
+        markFileComplete: function (url, byteCount) {
+          var path = this.normalizePath(url);
+          var f = this.files[path];
+          if (!f) {
+            this.registerFile(url, byteCount || 0);
+            f = this.files[path];
+          }
+          if (byteCount > 0 && f.total <= 0) {
+            f.total = byteCount;
+            this.totalBytes += byteCount;
+          }
+          if (f.total > 0) f.loaded = f.total;
+          else if (byteCount > 0) {
+            f.loaded = byteCount;
+            f.total = byteCount;
+            this.totalBytes += byteCount;
+          }
+          f.done = true;
+          this.recalculate();
+        },
+
+        hasInflightBuildResources: function () {
+          var entries = performance.getEntriesByType('resource');
+          var now = performance.now();
+          for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (!this.shouldTrackPath(this.normalizePath(e.name))) continue;
+            if (e.responseEnd === 0 && e.startTime > 0 && (now - e.startTime) < 180000) return true;
+          }
+          return false;
+        },
+
+        syncFromPerformance: function () {
+          var entries = performance.getEntriesByType('resource');
+          var changed = false;
+
+          for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var path = this.normalizePath(e.name);
+            if (!this.shouldTrackPath(path)) continue;
+
+            if (!this.files[path]) {
+              this.registerFile(e.name, 0);
+              changed = true;
+            }
+
+            var f = this.files[path];
+            var complete = e.responseEnd > 0;
+            var encoded = e.encodedBodySize || 0;
+            var transferred = e.transferSize || 0;
+            var observed = complete ? (encoded || transferred) : transferred;
+
+            if (complete && encoded > 0 && f.total <= 0) {
+              f.total = encoded;
+              this.totalBytes += encoded;
+              changed = true;
+            }
+
+            if (observed > f.loaded) {
+              f.loaded = observed;
+              changed = true;
+            }
+
+            if (complete) {
+              if (f.total > 0 && f.loaded < f.total) {
+                f.loaded = f.total;
+                changed = true;
+              }
+              if (!f.done) {
+                f.done = true;
+                changed = true;
+              }
+            } else if (observed > 0) {
+              f.done = false;
+              changed = true;
             }
           }
-        } catch (e) {}
-        return null;
-      }
 
-      function getBuildDownloadTotals() {
-        var loaded = 0;
-        var total = 0;
-        var allDone = true;
-        for (var i = 0; i < BUILD_DOWNLOAD_ASSETS.length; i++) {
-          var key = BUILD_DOWNLOAD_ASSETS[i].key;
-          var file = buildDownloads[key];
-          var fileTotal = file.total > 0 ? file.total : BUILD_DOWNLOAD_ASSETS[i].fallbackSize;
-          var fileLoaded = file.done ? fileTotal : Math.min(file.loaded, fileTotal);
-          loaded += fileLoaded;
-          total += fileTotal;
-          if (!file.done) allDone = false;
+          if (changed) this.recalculate();
+        },
+
+        recalculate: function () {
+          var loaded = 0;
+          var total = 0;
+          var fileCount = 0;
+          var path;
+
+          for (path in this.files) {
+            var f = this.files[path];
+            var fileTotal = f.total;
+            if (fileTotal <= 0 && f.loaded > 0) fileTotal = f.loaded;
+            if (fileTotal <= 0) continue;
+
+            fileCount++;
+            total += fileTotal;
+            loaded += Math.min(f.loaded, fileTotal);
+          }
+
+          this.loadedBytes = loaded;
+          this.totalBytes = total;
+
+          var bytesComplete = fileCount > 0 && total > 0 && loaded >= total;
+          var noInflight = !this.hasInflightBuildResources();
+
+          var allDone = true;
+          for (path in this.files) {
+            var entry = this.files[path];
+            if (entry.total <= 0 && !entry.done) {
+              allDone = false;
+              break;
+            }
+            if (entry.total > 0 && (!entry.done || entry.loaded < entry.total)) {
+              allDone = false;
+              break;
+            }
+          }
+
+          this.allBytesComplete = bytesComplete && noInflight && allDone;
+          refreshLoadingProgress();
+        },
+
+        getByteProgress: function () {
+          if (this.totalBytes <= 0) return -1;
+          return Math.min(1, this.loadedBytes / this.totalBytes);
+        },
+
+        computeDisplayProgress: function () {
+          var u = this.unityProgress;
+          var ratio = this.getByteProgress();
+
+          if (!this.allBytesComplete) {
+            if (ratio < 0) return 0;
+            return ratio * DOWNLOAD_PHASE_CAP;
+          }
+
+          if (u >= 1) return 1;
+          if (u <= 0.9) return DOWNLOAD_PHASE_CAP;
+          return DOWNLOAD_PHASE_CAP + ((u - 0.9) / 0.1) * (1 - DOWNLOAD_PHASE_CAP);
         }
-        return { loaded: loaded, total: total, allDone: allDone };
+      };
+
+      function startPerformanceSync() {
+        if (_perfSyncInterval) return;
+        downloadTracker.syncFromPerformance();
+        _perfSyncInterval = setInterval(function () {
+          downloadTracker.syncFromPerformance();
+        }, 200);
       }
 
-      function getByteDownloadRatio() {
-        var totals = getBuildDownloadTotals();
-        if (totals.total <= 0) return 0;
-        var ratio = totals.loaded / totals.total;
-        if (!totals.allDone) {
-          return Math.min(ratio, 0.9999);
+      function stopPerformanceSync() {
+        if (_perfSyncInterval) {
+          clearInterval(_perfSyncInterval);
+          _perfSyncInterval = null;
         }
-        return 1;
       }
 
-      var loaderProgress = {
-        displayRatio: 0,
+      function refreshLoadingProgress(unityProgress) {
+        if (unityProgress !== undefined) downloadTracker.unityProgress = unityProgress;
+        smoothProgress.setTarget(downloadTracker.computeDisplayProgress());
+      }
 
-        apply: function () {
-          var ratio = this.displayRatio;
-          var revealPct = 100 - (ratio * 100);
-          logoFill.style.clipPath = 'inset(0 ' + revealPct + '% 0 0)';
-          logoFill.style.webkitClipPath = 'inset(0 ' + revealPct + '% 0 0)';
-          progressValue.textContent = (ratio * 100).toFixed(2) + '%';
-          if (currentDownloadSpeedBps > 0 && ratio < 1) {
+      function installFetchProgressTracker() {
+        if (downloadTracker._fetchPatched) return;
+        downloadTracker._fetchPatched = true;
+
+        var nativeFetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+          var method = ((init && init.method) || 'GET').toUpperCase();
+          if (method === 'HEAD') return nativeFetch(input, init);
+
+          var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+          if (!downloadTracker.isTrackedUrl(url)) return nativeFetch(input, init);
+
+          var path = downloadTracker.normalizePath(url);
+          if (!downloadTracker.files[path]) downloadTracker.registerFile(url, 0);
+
+          return nativeFetch(input, init).then(function (response) {
+            if (!response.ok) return response;
+
+            if (!response.body) {
+              return response.clone().arrayBuffer().then(function (buf) {
+                downloadTracker.markFileComplete(url, buf.byteLength);
+                return new Response(buf, {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers
+                });
+              });
+            }
+
+            var fileRef = downloadTracker.files[path];
+            var contentLength = parseInt(response.headers.get('Content-Length'), 10);
+            if (contentLength > 0 && fileRef.total <= 0) {
+              fileRef.total = contentLength;
+              downloadTracker.totalBytes += contentLength;
+            }
+
+            var reader = response.body.getReader();
+            var loaded = fileRef.loaded;
+            var speedLastTime = performance.now();
+            var speedLastLoaded = loaded;
+
+            var stream = new ReadableStream({
+              pull: function (controller) {
+                return reader.read().then(function (result) {
+                  if (result.done) {
+                    if (fileRef.total <= 0 && loaded > 0) {
+                      downloadTracker.totalBytes += loaded - fileRef.loaded;
+                      fileRef.total = loaded;
+                    }
+                    fileRef.loaded = fileRef.total > 0 ? fileRef.total : loaded;
+                    fileRef.done = true;
+                    downloadTracker.recalculate();
+                    controller.close();
+                    return;
+                  }
+
+                  loaded += result.value.byteLength;
+                  fileRef.loaded = loaded;
+
+                  var now = performance.now();
+                  if (now - speedLastTime >= 200) {
+                    var elapsed = (now - speedLastTime) / 1000;
+                    if (elapsed > 0) currentDownloadSpeedBps = (loaded - speedLastLoaded) / elapsed;
+                    speedLastTime = now;
+                    speedLastLoaded = loaded;
+                  }
+
+                  downloadTracker.recalculate();
+                  controller.enqueue(result.value);
+                });
+              }
+            });
+
+            return new Response(stream, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers
+            });
+          });
+        };
+      }
+
+      function prepareDownloadTracking() {
+        installFetchProgressTracker();
+        startPerformanceSync();
+
+        var urls = [loaderUrl, config.dataUrl, config.frameworkUrl, config.codeUrl];
+        return Promise.all(urls.map(function (url) {
+          return fetch(url, { method: 'HEAD', cache: 'no-store' }).then(function (res) {
+            var len = parseInt(res.headers.get('Content-Length'), 10);
+            downloadTracker.registerFile(url, isNaN(len) ? 0 : len);
+          }).catch(function () {
+            downloadTracker.registerFile(url, 0);
+          });
+        }));
+      }
+
+      function markLoaderScriptComplete() {
+        var path = downloadTracker.normalizePath(loaderUrl);
+        var f = downloadTracker.files[path];
+        if (f && f.total > 0) {
+          f.loaded = f.total;
+          f.done = true;
+        } else {
+          var entries = performance.getEntriesByName(loaderUrl);
+          var size = 0;
+          if (entries.length > 0) {
+            var entry = entries[entries.length - 1];
+            size = entry.transferSize || entry.encodedBodySize || 0;
+          }
+          downloadTracker.markFileComplete(loaderUrl, size);
+          return;
+        }
+        downloadTracker.recalculate();
+      }
+
+      var smoothProgress = {
+        currentValue: 0,
+
+        setTarget: function (value) {
+          this.currentValue = Math.min(1, Math.max(0, value));
+          this.updateUI();
+        },
+
+        updateUI: function () {
+          var display = this.currentValue;
+          logoFill.style.clipPath = 'none';
+          logoFill.style.webkitClipPath = 'none';
+          logoFill.style.transform = 'translateZ(0) scaleX(' + display + ')';
+          logoFill.style.transformOrigin = 'left center';
+          progressValue.textContent = (display * 100).toFixed(2) + '%';
+          if (currentDownloadSpeedBps > 0 && display < 1) {
             progressSpeed.textContent = 'Est. speed: ' + formatSpeed(currentDownloadSpeedBps);
           } else {
             progressSpeed.textContent = '';
           }
         },
 
-        updateFromBytes: function () {
-          var totals = getBuildDownloadTotals();
-          var now = performance.now();
-          if (lastByteProgressTime > 0 && totals.loaded > lastByteProgressLoaded) {
-            var elapsed = (now - lastByteProgressTime) / 1000;
-            if (elapsed > 0) {
-              currentDownloadSpeedBps = (totals.loaded - lastByteProgressLoaded) / elapsed;
-            }
-          }
-          lastByteProgressTime = now;
-          lastByteProgressLoaded = totals.loaded;
+        stop: function () {},
 
-          this.displayRatio = getByteDownloadRatio();
-          if (_unityEngineStarting && totals.allDone) {
-            progressLabel.textContent = 'Starting...';
-          } else {
-            progressLabel.textContent = 'LOADING';
-          }
-          this.apply();
-        },
-
-        setComplete: function () {
-          this.displayRatio = 1;
-          this.apply();
-        },
-
-        reset: function () {
-          this.displayRatio = 0;
-          lastByteProgressTime = 0;
-          lastByteProgressLoaded = 0;
-          currentDownloadSpeedBps = 0;
-          _unityEngineStarting = false;
-          BUILD_DOWNLOAD_ASSETS.forEach(function (asset) {
-            buildDownloads[asset.key].loaded = 0;
-            buildDownloads[asset.key].done = false;
-            buildDownloads[asset.key].activeFetches = 0;
-          });
-          this.apply();
+        setImmediate: function (value) {
+          value = Math.min(1, Math.max(0, value));
+          this.currentValue = value;
+          this.updateUI();
         }
       };
-
-      function estimateCompressedTotal(response, fallbackTotal) {
-        var headerTotal = parseInt(response.headers.get('Content-Length') || '0', 10);
-        if (headerTotal > 0) return headerTotal;
-        var encoding = response.headers.get('Content-Encoding');
-        if (encoding === 'br' && fallbackTotal > 0) {
-          return Math.min(Math.round(fallbackTotal * 0.45), 536870912);
-        }
-        if (encoding === 'gzip' && fallbackTotal > 0) {
-          return Math.min(Math.round(fallbackTotal * 0.35), 536870912);
-        }
-        return fallbackTotal;
-      }
-
-      function trackBuildResponseBody(key, response) {
-        var file = buildDownloads[key];
-        var asset = BUILD_DOWNLOAD_ASSETS.filter(function (a) { return a.key === key; })[0];
-        var fallbackTotal = asset ? asset.fallbackSize : 0;
-        var expectedTotal = estimateCompressedTotal(response, fallbackTotal);
-        if (expectedTotal > 0) {
-          file.total = expectedTotal;
-        }
-
-        if (!response.body) {
-          file.loaded = file.total;
-          file.done = true;
-          file.activeFetches = Math.max(0, file.activeFetches - 1);
-          loaderProgress.updateFromBytes();
-          return response;
-        }
-
-        var reader = response.body.getReader();
-        var stream = new ReadableStream({
-          start: function (controller) {
-            function pump() {
-              return reader.read().then(function (result) {
-                if (result.done) {
-                  file.loaded = file.total > 0 ? file.total : file.loaded;
-                  file.done = true;
-                  file.activeFetches = Math.max(0, file.activeFetches - 1);
-                  loaderProgress.updateFromBytes();
-                  controller.close();
-                  return;
-                }
-                file.loaded += result.value.byteLength;
-                if (file.total > 0 && file.loaded > file.total) {
-                  file.total = file.loaded;
-                }
-                loaderProgress.updateFromBytes();
-                controller.enqueue(result.value);
-                return pump();
-              }).catch(function (err) {
-                file.activeFetches = Math.max(0, file.activeFetches - 1);
-                controller.error(err);
-                throw err;
-              });
-            }
-            return pump();
-          }
-        });
-
-        return new Response(stream, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers
-        });
-      }
-
-      function installBuildDownloadTracker() {
-        if (_buildFetchTrackerInstalled) return;
-        _buildFetchTrackerInstalled = true;
-        window.fetch = function (input, init) {
-          var reqUrl = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-          var method = (init && init.method) || (input && input.method) || 'GET';
-          var key = matchBuildDownloadKey(reqUrl);
-          if (!key || method.toUpperCase() !== 'GET') {
-            return _nativeFetch(input, init);
-          }
-
-          var file = buildDownloads[key];
-          file.loaded = 0;
-          file.activeFetches += 1;
-          file.done = false;
-
-          return _nativeFetch(input, init).then(function (response) {
-            if (!response || !response.ok) {
-              file.activeFetches = Math.max(0, file.activeFetches - 1);
-              return response;
-            }
-            return trackBuildResponseBody(key, response);
-          }).catch(function (err) {
-            file.activeFetches = Math.max(0, file.activeFetches - 1);
-            throw err;
-          });
-        };
-      }
-
-      function checkCachedBuildFiles() {
-        if (!window.caches) return Promise.resolve();
-        var cacheName = 'UnityCache_' + config.companyName + '_' + config.productName;
-        return caches.open(cacheName).then(function (cache) {
-          return Promise.all(BUILD_DOWNLOAD_ASSETS.map(function (asset) {
-            var url = new URL(buildUrl + '/' + asset.suffix + buildQuery, document.URL).href;
-            return cache.match(url).then(function (response) {
-              if (!response) return;
-              var size = parseInt(response.headers.get('Content-Length') || '0', 10);
-              if (size <= 0) size = asset.fallbackSize;
-              var file = buildDownloads[asset.key];
-              file.total = size;
-              file.loaded = size;
-              file.done = true;
-            });
-          }));
-        }).catch(function () {});
-      }
-
-      function probeBuildFileSizes() {
-        return Promise.all(BUILD_DOWNLOAD_ASSETS.map(function (asset) {
-          var url = buildUrl + '/' + asset.suffix + buildQuery;
-          return _nativeFetch(url, { method: 'HEAD', cache: 'no-cache' }).then(function (response) {
-            if (!response.ok) return;
-            var size = parseInt(response.headers.get('Content-Length') || '0', 10);
-            if (size > 0) {
-              buildDownloads[asset.key].total = size;
-            }
-          }).catch(function () {});
-        })).then(function () {
-          return checkCachedBuildFiles();
-        }).then(function () {
-          loaderProgress.updateFromBytes();
-        });
-      }
 
       function unityShowBanner(msg, type) {
         function updateBannerVisibility() {
@@ -733,9 +839,8 @@
         document.addEventListener('MSFullscreenChange', resizeCanvas);
       }
 
-      installBuildDownloadTracker();
       loadingBar.style.display = "block";
-      loaderProgress.reset();
+      smoothProgress.setImmediate(0);
 
       /* ── iOS Safari detection (excludes Chrome/Firefox/Edge/Opera on iOS) ── */
       var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -886,8 +991,7 @@
       function startUnityGame() {
         if (_maintenanceActive) return;
 
-        loaderProgress.reset();
-        probeBuildFileSizes().finally(function () {
+        prepareDownloadTracking().then(function () {
           if (_maintenanceActive) return;
 
           var script = document.createElement("script");
@@ -897,17 +1001,35 @@
           };
           script.onload = function () {
             if (_maintenanceActive) return;
-            createUnityInstance(canvas, config, function (progress) {
+            markLoaderScriptComplete();
+
+            createUnityInstance(canvas, config, (progress) => {
               if (_maintenanceActive) return;
-              var totals = getBuildDownloadTotals();
-              if (totals.allDone && progress >= 0.9) {
-                _unityEngineStarting = true;
-                loaderProgress.updateFromBytes();
+
+              var now = performance.now();
+              if (lastProgressTime > 0 && downloadTracker.loadedBytes > lastLoadedBytes) {
+                var elapsed = (now - lastProgressTime) / 1000;
+                if (elapsed > 0) {
+                  currentDownloadSpeedBps = (downloadTracker.loadedBytes - lastLoadedBytes) / elapsed;
+                }
               }
-            }).then(function (unityInstance) {
+              lastProgressTime = now;
+              lastLoadedBytes = downloadTracker.loadedBytes;
+
+              refreshLoadingProgress(progress);
+
+              if (progress >= 1 && downloadTracker.allBytesComplete) {
+                progressLabel.textContent = 'Starting...';
+              }
+            }).then((unityInstance) => {
               if (_maintenanceActive) return;
               window.unityInstance = unityInstance;
-              loaderProgress.setComplete();
+              stopPerformanceSync();
+              downloadTracker.syncFromPerformance();
+              downloadTracker.allBytesComplete = true;
+              downloadTracker.unityProgress = 1;
+              smoothProgress.setImmediate(1);
+              smoothProgress.stop();
               loadingBar.style.display = "none";
               _unityLoaded = true;
               unlockLoaderInput();
@@ -1226,7 +1348,7 @@
       checkOrientation();
 
       function getApiBase() {
-        return 'https://gamevault222.com';
+        return 'http://localhost:5036';
         if (window.CASINO_API_BASE) return window.CASINO_API_BASE;
         var metaEl = document.querySelector('meta[name="casino-api-base"]');
         if (metaEl && metaEl.content) return metaEl.content;
