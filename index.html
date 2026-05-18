@@ -380,6 +380,15 @@
         return bytesPerSecond.toFixed(0) + ' B/s';
       }
 
+      /* Unity may report progress=1 while WASM is still compiling; cap UI until .then() */
+      var LOADER_DISPLAY_MAX = 0.99;
+
+      function unityProgressToDisplay(progress) {
+        var p = Math.min(1, Math.max(0, progress));
+        if (p >= 1) return LOADER_DISPLAY_MAX;
+        return p;
+      }
+
       var smoothProgress = {
         currentValue: 0,
         targetValue: 0,
@@ -405,7 +414,12 @@
         },
 
         setTarget: function (value) {
-          this.targetValue = Math.max(this.targetValue, Math.min(1, value));
+          value = Math.min(1, Math.max(0, value));
+          this.targetValue = value;
+          if (this.currentValue > this.targetValue) {
+            this.currentValue = this.targetValue;
+            this.updateUI();
+          }
           if (!this.isAnimating) this.start();
         },
 
@@ -414,16 +428,19 @@
           var now = performance.now();
           if (now - this.lastUpdateTime >= this.minUpdateInterval) {
             var difference = this.targetValue - this.currentValue;
-            if (Math.abs(difference) < 0.001) {
+            if (Math.abs(difference) < 0.0005) {
               this.currentValue = this.targetValue;
               this.updateUI();
-              if (this.targetValue >= 1) { this.stop(); return; }
-            } else {
-              var speed = 0.12 + (Math.abs(difference) * 0.08);
-              if (speed > 0.25) speed = 0.25;
-              this.currentValue += difference * speed;
-              this.updateUI();
+              this.stop();
+              return;
             }
+            var speed = 0.06 + (Math.abs(difference) * 0.04);
+            if (speed > 0.14) speed = 0.14;
+            this.currentValue += difference * speed;
+            if (this.currentValue > this.targetValue) {
+              this.currentValue = this.targetValue;
+            }
+            this.updateUI();
             this.lastUpdateTime = now;
           }
           var self = this;
@@ -431,12 +448,11 @@
         },
 
         updateUI: function () {
-          var pct = Math.round(this.currentValue * 100);
           var revealPct = 100 - (this.currentValue * 100);
           logoFill.style.clipPath = 'inset(0 ' + revealPct + '% 0 0)';
           logoFill.style.webkitClipPath = 'inset(0 ' + revealPct + '% 0 0)';
           progressValue.textContent = (this.currentValue * 100).toFixed(2) + '%';
-          if (currentDownloadSpeedBps > 0 && this.currentValue < 1) {
+          if (currentDownloadSpeedBps > 0 && this.currentValue < LOADER_DISPLAY_MAX) {
             progressSpeed.textContent = 'Est. speed: ' + formatSpeed(currentDownloadSpeedBps);
           } else {
             progressSpeed.textContent = '';
@@ -444,8 +460,9 @@
         },
 
         setImmediate: function (value) {
-          this.currentValue = value;
-          this.targetValue = value;
+          this.stop();
+          this.currentValue = Math.min(1, Math.max(0, value));
+          this.targetValue = this.currentValue;
           this.updateUI();
         }
       };
@@ -731,10 +748,12 @@
             lastProgressTime = now;
             lastProgressValue = progress;
 
-            smoothProgress.setTarget(progress);
+            smoothProgress.setTarget(unityProgressToDisplay(progress));
 
             if (progress >= 1) {
               progressLabel.textContent = 'Starting...';
+            } else {
+              progressLabel.textContent = 'LOADING';
             }
           }).then((unityInstance) => {
             if (_maintenanceActive) return;
@@ -1058,7 +1077,7 @@
       checkOrientation();
 
       function getApiBase() {
-        return 'https://gamevault222.com';
+        return 'http://localhost:5036';
         if (window.CASINO_API_BASE) return window.CASINO_API_BASE;
         var metaEl = document.querySelector('meta[name="casino-api-base"]');
         if (metaEl && metaEl.content) return metaEl.content;
