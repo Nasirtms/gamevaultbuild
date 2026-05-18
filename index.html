@@ -363,6 +363,8 @@
 
       var progressBarFull = document.querySelector("#unity-logo-fill");
       var progressText = document.querySelector("#unity-progress-text");
+      var progressValueEl = progressText ? progressText.querySelector(".unity-progress-value") : null;
+      var progressSpeedEl = progressText ? progressText.querySelector(".unity-progress-speed") : null;
       var _maintenanceActive = false;
       var buildVersion = "1778929172191";
 
@@ -372,7 +374,10 @@
          CSS.supports("-webkit-clip-path: inset(0 50% 0 0)"))
       );
 
-      var totalDownloadBytes = (19.31 + 13.47 + 0.1) * 1024 * 1024;
+      var UNITY_DATA_MB = 19.31;
+      var UNITY_FRAMEWORK_MB = 13.47;
+      var UNITY_WASM_MB = 0.1;
+      var totalDownloadBytes = (UNITY_DATA_MB + UNITY_FRAMEWORK_MB + UNITY_WASM_MB) * 1024 * 1024;
       var lastProgressTime = null;
       var lastProgressValue = 0;
       var currentDownloadSpeedBps = 0;
@@ -382,6 +387,160 @@
         if (bytesPerSecond >= 1024 * 1024) return (bytesPerSecond / (1024 * 1024)).toFixed(2) + " MB/s";
         if (bytesPerSecond >= 1024) return (bytesPerSecond / 1024).toFixed(1) + " KB/s";
         return Math.round(bytesPerSecond) + " B/s";
+      }
+
+      // Unity WebGL loader reports download progress as 0..0.9 (see l(.9*...) in Builds.loader.js), then l(1) after init.
+      // Map that onto the UI so the logo never looks full until downloads are done, and not 100% until createUnityInstance resolves.
+      var UNITY_DOWNLOAD_PROGRESS_MAX = 0.9;
+      var UI_PROGRESS_DURING_DOWNLOAD_MAX = 0.86;
+      var UI_PROGRESS_ON_UNITY_READY = 0.975;
+
+      function mapUnityLoaderProgressToUi(unityProgress) {
+        if (unityProgress >= 1) return UI_PROGRESS_ON_UNITY_READY;
+        var p = Math.min(Math.max(unityProgress, 0), UNITY_DOWNLOAD_PROGRESS_MAX);
+        return (p / UNITY_DOWNLOAD_PROGRESS_MAX) * UI_PROGRESS_DURING_DOWNLOAD_MAX;
+      }
+
+      // Real byte progress for main Unity files (Unity's progress callback can hit ~0.9 before WASM finishes).
+      var unityAssetByteState = {
+        data: { loaded: 0, headerTotal: 0, done: false },
+        framework: { loaded: 0, headerTotal: 0, done: false },
+        wasm: { loaded: 0, headerTotal: 0, done: false }
+      };
+      var UNITY_ASSET_FALLBACK_BYTES = {
+        data: UNITY_DATA_MB * 1024 * 1024,
+        framework: UNITY_FRAMEWORK_MB * 1024 * 1024,
+        wasm: UNITY_WASM_MB * 1024 * 1024
+      };
+      var lastNetworkBytesSum = 0;
+      var lastNetworkSpeedTime = null;
+
+      function unityMainAssetKeyFromPathname(pathname) {
+        if (!pathname) return null;
+        if (/Builds\.wasm\.unityweb$/i.test(pathname)) return "wasm";
+        if (/Builds\.framework\.js\.unityweb$/i.test(pathname)) return "framework";
+        if (/Builds\.data\.unityweb$/i.test(pathname)) return "data";
+        return null;
+      }
+
+      function effectiveAssetTotalBytes(key, st) {
+        if (st.headerTotal > 0) return st.headerTotal;
+        if (st.done) return Math.max(st.loaded, 1);
+        if (st.loaded > 0) return UNITY_ASSET_FALLBACK_BYTES[key] || 1;
+        return 0;
+      }
+
+      function getUnityNetworkLoadedRatio() {
+        var keys = ["data", "framework", "wasm"];
+        var anyActivity = false;
+        for (var a = 0; a < keys.length; a++) {
+          var st0 = unityAssetByteState[keys[a]];
+          if (st0.loaded > 0 || st0.done) {
+            anyActivity = true;
+            break;
+          }
+        }
+        if (!anyActivity) return null;
+
+        var loaded = 0;
+        var total = 0;
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var st = unityAssetByteState[k];
+          loaded += st.loaded;
+          total += effectiveAssetTotalBytes(k, st);
+        }
+        if (total <= 0) return null;
+        return Math.min(1, loaded / total);
+      }
+
+      function updateNetworkDownloadSpeed(sumLoaded) {
+        var now = performance.now() / 1000;
+        if (lastNetworkSpeedTime != null && sumLoaded > lastNetworkBytesSum) {
+          var dt = now - lastNetworkSpeedTime;
+          if (dt > 0.15) {
+            currentDownloadSpeedBps = (sumLoaded - lastNetworkBytesSum) / dt;
+            lastNetworkBytesSum = sumLoaded;
+            lastNetworkSpeedTime = now;
+          }
+        } else if (lastNetworkSpeedTime == null) {
+          lastNetworkBytesSum = sumLoaded;
+          lastNetworkSpeedTime = now;
+        }
+      }
+
+      function notifyUnityMainAssetByteProgress() {
+        var sumL = 0;
+        var keys = ["data", "framework", "wasm"];
+        for (var j = 0; j < keys.length; j++) {
+          sumL += unityAssetByteState[keys[j]].loaded;
+        }
+        updateNetworkDownloadSpeed(sumL);
+        pushLoaderProgressFromNetworkIfNeeded();
+      }
+
+      function wrapUnityMainAssetResponseBody(assetKey, res) {
+        if (!res || !res.body || typeof res.body.getReader !== "function") return res;
+        var st = unityAssetByteState[assetKey];
+        var cl = parseInt(res.headers.get("Content-Length") || "0", 10) || 0;
+        if (cl > 0) st.headerTotal = cl;
+
+        var reader = res.body.getReader();
+        var monitored = new ReadableStream({
+          pull: function (controller) {
+            return reader.read().then(function (chunk) {
+              if (chunk.done) {
+                st.done = true;
+                if (st.headerTotal > 0) st.loaded = st.headerTotal;
+                notifyUnityMainAssetByteProgress();
+                controller.close();
+                return;
+              }
+              if (chunk.value && chunk.value.byteLength) st.loaded += chunk.value.byteLength;
+              notifyUnityMainAssetByteProgress();
+              controller.enqueue(chunk.value);
+            });
+          },
+          cancel: function (reason) {
+            return reader.cancel(reason);
+          }
+        });
+
+        try {
+          return new Response(monitored, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers
+          });
+        } catch (e) {
+          return res;
+        }
+      }
+
+      function installUnityMainAssetFetchTracker() {
+        if (window.__unityMainAssetFetchTrackerInstalled) return;
+        window.__unityMainAssetFetchTrackerInstalled = true;
+
+        var origFetch = window.fetch;
+        window.fetch = function (input, init) {
+          return origFetch.apply(this, arguments).then(function (res) {
+            var urlStr = "";
+            if (typeof input === "string") urlStr = input;
+            else if (input && typeof input.url === "string") urlStr = input.url;
+            if (!urlStr || !res || !res.ok) return res;
+
+            var pathname;
+            try {
+              pathname = new URL(urlStr, document.URL).pathname;
+            } catch (e) {
+              return res;
+            }
+
+            var assetKey = unityMainAssetKeyFromPathname(pathname);
+            if (!assetKey) return res;
+            return wrapUnityMainAssetResponseBody(assetKey, res);
+          });
+        };
       }
 
       var smoothProgress = {
@@ -418,6 +577,13 @@
           this.updateUI();
         },
 
+        setSynced: function (target) {
+          var v = Math.max(0, Math.min(1, target));
+          this.currentValue = v;
+          this.targetValue = v;
+          this.updateUI();
+        },
+
         animate: function () {
           if (!this.isAnimating) return;
 
@@ -437,8 +603,8 @@
             return;
           }
 
-          var speed = 0.12 + Math.abs(difference) * 0.08;
-          speed = Math.min(speed, 0.25);
+          var speed = 0.1 + Math.abs(difference) * 0.06;
+          speed = Math.min(speed, 0.16);
 
           this.currentValue += difference * speed;
 
@@ -452,8 +618,9 @@
         },
 
         updateUI: function () {
-          var percentage = (this.currentValue * 100).toFixed(2);
-          var reveal = 100 - parseFloat(percentage);
+          var v = Math.max(0, Math.min(1, this.currentValue));
+          var reveal = 100 - v * 100;
+          var percentageStr = (v * 100).toFixed(2);
 
           if (supportsClipReveal) {
             var insetValue = "inset(0 " + reveal + "% 0 0)";
@@ -463,20 +630,48 @@
           } else {
             progressBarFull.style.clipPath = "";
             progressBarFull.style.webkitClipPath = "";
-            progressBarFull.style.width = percentage + "%";
+            progressBarFull.style.width = percentageStr + "%";
           }
 
-          if (progressText) {
+          if (progressValueEl) progressValueEl.textContent = percentageStr + "%";
+          if (progressSpeedEl) {
             var speedStr = formatSpeed(currentDownloadSpeedBps);
-            progressText.innerHTML =
-              '<div class="unity-progress-line">' +
-              '<span class="unity-progress-label">LOADING</span>' +
-              '<span class="unity-progress-value">' + percentage + '%</span>' +
-              '</div>' +
-              (speedStr ? '<span class="unity-progress-speed">Est. speed: ' + speedStr + '</span>' : '');
+            progressSpeedEl.textContent = speedStr ? "Est. speed: " + speedStr : "";
+            progressSpeedEl.style.display = speedStr ? "" : "none";
           }
         }
       };
+
+      var lastUnityLoaderProgressForUi = 0;
+      var lastNetworkUiPushMs = 0;
+
+      function combinedLoaderUiTarget(unityProgress) {
+        var netRatio = getUnityNetworkLoadedRatio();
+        if (netRatio != null) {
+          if (netRatio < 1 && unityProgress < UNITY_DOWNLOAD_PROGRESS_MAX) {
+            return Math.min(netRatio * UI_PROGRESS_DURING_DOWNLOAD_MAX, 0.999);
+          }
+          var initT = Math.min(
+            1,
+            Math.max(0, (unityProgress - UNITY_DOWNLOAD_PROGRESS_MAX) / (1 - UNITY_DOWNLOAD_PROGRESS_MAX))
+          );
+          var initSpan = UI_PROGRESS_ON_UNITY_READY - UI_PROGRESS_DURING_DOWNLOAD_MAX;
+          return Math.min(UI_PROGRESS_DURING_DOWNLOAD_MAX + initT * initSpan, 0.999);
+        }
+        if (unityProgress >= 1) return UI_PROGRESS_ON_UNITY_READY;
+        return mapUnityLoaderProgressToUi(unityProgress);
+      }
+
+      function applyLoaderUiProgress(unityProgress) {
+        smoothProgress.setSynced(combinedLoaderUiTarget(unityProgress));
+      }
+
+      function pushLoaderProgressFromNetworkIfNeeded() {
+        var now = performance.now();
+        if (now - lastNetworkUiPushMs < 32) return;
+        lastNetworkUiPushMs = now;
+        applyLoaderUiProgress(lastUnityLoaderProgressForUi);
+      }
 
       function unityShowBanner(msg, type) {
         function updateBannerVisibility() {
@@ -526,6 +721,8 @@
           return "no-store";
         },
       };
+
+      installUnityMainAssetFetchTracker();
 
       var meta = document.createElement('meta');
       meta.name = 'viewport';
@@ -747,8 +944,9 @@
           if (_maintenanceActive) return;
           createUnityInstance(canvas, config, function (progress) {
             if (_maintenanceActive) return;
+            lastUnityLoaderProgressForUi = progress;
             var now = performance.now() / 1000;
-            if (lastProgressTime != null && progress > lastProgressValue) {
+            if (getUnityNetworkLoadedRatio() == null && lastProgressTime != null && progress > lastProgressValue) {
               var dt = now - lastProgressTime;
               if (dt > 0.2) {
                 var loadedDelta = (progress - lastProgressValue) * totalDownloadBytes;
@@ -758,8 +956,7 @@
             lastProgressTime = now;
             lastProgressValue = progress;
 
-            // Cap below 100% until Unity is fully ready (.then) — keeps bar/text/fill in sync with downloads
-            smoothProgress.setTarget(Math.min(progress, 0.999));
+            applyLoaderUiProgress(progress);
           }).then(function (unityInstance) {
             if (_maintenanceActive) return;
             smoothProgress.setImmediate(1.0);
