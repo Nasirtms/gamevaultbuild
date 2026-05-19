@@ -15,6 +15,29 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
     <meta name="casino-api-base" content="">
+    <meta name="casino-socket-base" content="https://api.gamevault222.com">
+    <script>
+    (function () {
+      var SOCKET_BASE = 'wss://api.gamevault222.com';
+      var NativeWS = window.WebSocket;
+      function rewriteWsUrl(url) {
+        if (typeof url !== 'string') return url;
+        url = url.replace(/^wss:\/\/gamevault222\.com/i, SOCKET_BASE);
+        url = url.replace(/^ws:\/\/gamevault222\.com/i, SOCKET_BASE.replace(/^wss/, 'ws'));
+        url = url.replace(/\/ws\/user-session/i, '/ws/session');
+        return url;
+      }
+      function PatchedWebSocket(url, protocols) {
+        return new NativeWS(rewriteWsUrl(url), protocols);
+      }
+      PatchedWebSocket.prototype = NativeWS.prototype;
+      PatchedWebSocket.CONNECTING = NativeWS.CONNECTING;
+      PatchedWebSocket.OPEN = NativeWS.OPEN;
+      PatchedWebSocket.CLOSING = NativeWS.CLOSING;
+      PatchedWebSocket.CLOSED = NativeWS.CLOSED;
+      window.WebSocket = PatchedWebSocket;
+    })();
+    </script>
     <style>
       #loader-fs-hint {
         position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -370,14 +393,17 @@
 
       var supportsClipReveal = !!(
         window.CSS &&
-        (CSS.supports("clip-path: inset(0 50% 0 0)") ||
-         CSS.supports("-webkit-clip-path: inset(0 50% 0 0)"))
+        (CSS.supports("clip-path: inset(50% 0 0 0)") ||
+         CSS.supports("-webkit-clip-path: inset(50% 0 0 0)"))
       );
 
       var UNITY_LOADER_MB = 0.35;
-      var UNITY_DATA_MB = 19.31;
+      var UNITY_DATA_MB = 18.9;
       var UNITY_FRAMEWORK_MB = 13.47;
-      var UNITY_WASM_MB = 6;
+      var UNITY_WASM_MB = 12.5;
+      // Logo PNG letterboxing within the fill container (clip-path uses box, not art bounds).
+      var LOGO_CLIP_TOP_EMPTY_PERCENT = 11;
+      var LOGO_CLIP_BOTTOM_EMPTY_PERCENT = 6;
       var BUILD_ASSET_KEYS = ["loader", "data", "framework", "wasm"];
       var buildLoadTrackingStarted = false;
       var buildResourcePollId = null;
@@ -394,13 +420,17 @@
       }
 
       // Unity WebGL loader reports download progress as 0..0.9 (see l(.9*...) in Builds.loader.js), then l(1) after init.
-      // Map that onto the UI so the logo never looks full until downloads are done, and not 100% until createUnityInstance resolves.
+      // Map Unity loader callback only while network byte totals are unavailable.
       var UNITY_DOWNLOAD_PROGRESS_MAX = 0.9;
-      var UI_PROGRESS_DURING_DOWNLOAD_MAX = 0.86;
-      var UI_PROGRESS_ON_UNITY_READY = 0.975;
+      // Real bytes → 0–90% UI; after all build files finish → smooth 90–100%; hide loader then show canvas.
+      var UI_PROGRESS_DURING_DOWNLOAD_MAX = 0.9;
+      var UI_NETWORK_COMPLETE_RATIO = 0.995;
+      var LOADER_HOLD_AT_100_MS = 450;
+      // Max UI progress increase per animation frame (prevents jumps to 100%).
+      var UI_PROGRESS_MAX_STEP_PER_FRAME = 0.01;
+      var UI_POST_DOWNLOAD_MAX_STEP_PER_FRAME = 0.0035;
 
       function mapUnityLoaderProgressToUi(unityProgress) {
-        if (unityProgress >= 1) return UI_PROGRESS_ON_UNITY_READY;
         var p = Math.min(Math.max(unityProgress, 0), UNITY_DOWNLOAD_PROGRESS_MAX);
         return (p / UNITY_DOWNLOAD_PROGRESS_MAX) * UI_PROGRESS_DURING_DOWNLOAD_MAX;
       }
@@ -420,6 +450,11 @@
       };
       var lastNetworkBytesSum = 0;
       var lastNetworkSpeedTime = null;
+      var _postDownloadPhase = false;
+      var _unityInstanceReady = false;
+      var _loaderHidden = false;
+      var _loaderHideScheduled = false;
+      var _loaderForceHideTimer = null;
 
       function unityMainAssetKeyFromPathname(pathname) {
         if (!pathname) return null;
@@ -440,8 +475,10 @@
       }
 
       function plannedAssetTotalBytes(key, st) {
-        if (st.headerTotal > 0) return st.headerTotal;
-        return UNITY_ASSET_FALLBACK_BYTES[key] || 0;
+        var fallback = UNITY_ASSET_FALLBACK_BYTES[key] || 0;
+        var planned = Math.max(st.headerTotal, fallback);
+        if (st.loaded > planned) planned = st.loaded;
+        return planned;
       }
 
       function allBuildDownloadsComplete() {
@@ -450,7 +487,7 @@
           var st = unityAssetByteState[k];
           if (!st.done) return false;
           var expected = plannedAssetTotalBytes(k, st);
-          if (expected > 0 && st.loaded < expected * 0.99) return false;
+          if (expected > 0 && st.loaded < expected * 0.995) return false;
         }
         return true;
       }
@@ -479,16 +516,28 @@
           var key = unityMainAssetKeyFromUrl(entry.name);
           if (!key) continue;
           var st = unityAssetByteState[key];
-          if (entry.encodedBodySize > 0) {
+          var wireSize = entry.transferSize > 0 ? entry.transferSize : 0;
+          if (wireSize > 0) {
+            st.headerTotal = Math.max(st.headerTotal, wireSize);
+          } else if (entry.encodedBodySize > 0) {
             st.headerTotal = Math.max(st.headerTotal, entry.encodedBodySize);
           }
           if (entry.responseEnd > 0) {
-            var size = entry.encodedBodySize || entry.transferSize || 0;
-            if (size > 0) st.loaded = Math.max(st.loaded, size);
-            st.done = true;
+            var size = wireSize || entry.encodedBodySize || 0;
+            if (size > 0) {
+              var planned = plannedAssetTotalBytes(key, st);
+              if (planned > 0 && size > planned * 1.25) {
+                size = st.loaded;
+              }
+              st.loaded = Math.max(st.loaded, size);
+            }
+            var expected = plannedAssetTotalBytes(key, st);
+            if (expected > 0 && st.loaded >= expected * 0.995) {
+              st.done = true;
+            }
             touched = true;
-          } else if (entry.transferSize > 0) {
-            st.loaded = Math.max(st.loaded, entry.transferSize);
+          } else if (wireSize > 0) {
+            st.loaded = Math.max(st.loaded, wireSize);
             touched = true;
           }
         }
@@ -545,7 +594,8 @@
             return reader.read().then(function (chunk) {
               if (chunk.done) {
                 st.done = true;
-                if (st.headerTotal > 0) st.loaded = st.headerTotal;
+                if (st.headerTotal > 0) st.loaded = Math.max(st.loaded, st.headerTotal);
+                else if (st.loaded > 0) st.headerTotal = st.loaded;
                 notifyUnityMainAssetByteProgress();
                 controller.close();
                 return;
@@ -643,18 +693,28 @@
           if (Math.abs(difference) < 0.001) {
             this.currentValue = this.targetValue;
             this.updateUI();
-            if (this.currentValue < 1.0) {
+            if (this.currentValue < 1.0 || this.targetValue > this.currentValue + 0.0005) {
               this.animationFrameId = requestAnimationFrame(() => this.animate());
             } else {
               this.stop();
+              if (_postDownloadPhase && _unityInstanceReady) {
+                pollLoaderHideWhenReady();
+              }
             }
             return;
           }
 
-          var speed = 0.1 + Math.abs(difference) * 0.06;
-          speed = Math.min(speed, 0.16);
+          var speed = 0.035 + Math.abs(difference) * 0.025;
+          speed = Math.min(speed, _postDownloadPhase ? 0.04 : 0.065);
 
-          this.currentValue += difference * speed;
+          var step = difference * speed;
+          if (step > 0) {
+            var maxStep = _postDownloadPhase
+              ? UI_POST_DOWNLOAD_MAX_STEP_PER_FRAME
+              : UI_PROGRESS_MAX_STEP_PER_FRAME;
+            if (step > maxStep) step = maxStep;
+          }
+          this.currentValue += step;
 
           if ((difference > 0 && this.currentValue > this.targetValue) ||
               (difference < 0 && this.currentValue < this.targetValue)) {
@@ -667,21 +727,36 @@
 
         updateUI: function () {
           var v = Math.max(0, Math.min(1, this.currentValue));
-          var reveal = 100 - v * 100;
-          var percentageStr = (v * 100).toFixed(2);
+          var fillSpan = 100 - LOGO_CLIP_TOP_EMPTY_PERCENT - LOGO_CLIP_BOTTOM_EMPTY_PERCENT;
+          var clipTop = LOGO_CLIP_TOP_EMPTY_PERCENT + (1 - v) * fillSpan;
+          var percent = Math.floor(v * 100);
+          var percentageStr = percent + "%";
 
-          if (supportsClipReveal) {
-            var insetValue = "inset(0 " + reveal + "% 0 0)";
-            progressBarFull.style.clipPath = insetValue;
-            progressBarFull.style.webkitClipPath = insetValue;
+          if (progressBarFull) {
             progressBarFull.style.width = "100%";
-          } else {
-            progressBarFull.style.clipPath = "";
-            progressBarFull.style.webkitClipPath = "";
-            progressBarFull.style.width = percentageStr + "%";
+            progressBarFull.style.height = "100%";
+            progressBarFull.style.top = "0";
+            progressBarFull.style.left = "0";
+            progressBarFull.style.transform = "translateZ(0)";
+            progressBarFull.style.webkitTransform = "translateZ(0)";
+
+            if (supportsClipReveal) {
+              var insetValue = "inset(" + clipTop + "% 0 0 0)";
+              progressBarFull.style.clipPath = insetValue;
+              progressBarFull.style.webkitClipPath = insetValue;
+              progressBarFull.style.maskImage = "";
+              progressBarFull.style.webkitMaskImage = "";
+            } else {
+              var maskFill = (LOGO_CLIP_BOTTOM_EMPTY_PERCENT + v * fillSpan).toFixed(2) + "%";
+              var maskValue = "linear-gradient(to top, #000 0%, #000 " + maskFill + ", transparent " + maskFill + ")";
+              progressBarFull.style.clipPath = "";
+              progressBarFull.style.webkitClipPath = "";
+              progressBarFull.style.maskImage = maskValue;
+              progressBarFull.style.webkitMaskImage = maskValue;
+            }
           }
 
-          if (progressValueEl) progressValueEl.textContent = percentageStr + "%";
+          if (progressValueEl) progressValueEl.textContent = percentageStr;
           if (progressSpeedEl) {
             var speedStr = formatSpeed(currentDownloadSpeedBps);
             progressSpeedEl.textContent = speedStr ? "Est. speed: " + speedStr : "";
@@ -693,24 +768,21 @@
       var lastUnityLoaderProgressForUi = 0;
       var lastNetworkUiPushMs = 0;
 
+      function buildDownloadsReadyForInit() {
+        if (!allBuildDownloadsComplete()) return false;
+        var netRatio = getUnityNetworkLoadedRatio();
+        if (netRatio != null && netRatio < UI_NETWORK_COMPLETE_RATIO) return false;
+        return true;
+      }
+
       function combinedLoaderUiTarget(unityProgress) {
+        if (_postDownloadPhase) return 1.0;
+
         var netRatio = getUnityNetworkLoadedRatio();
         if (netRatio != null) {
-          if (!allBuildDownloadsComplete()) {
-            return Math.min(netRatio * UI_PROGRESS_DURING_DOWNLOAD_MAX, 0.998);
-          }
-          if (unityProgress < 1) {
-            var initT = Math.min(
-              1,
-              Math.max(0, (unityProgress - UNITY_DOWNLOAD_PROGRESS_MAX) / (1 - UNITY_DOWNLOAD_PROGRESS_MAX))
-            );
-            var initSpan = UI_PROGRESS_ON_UNITY_READY - UI_PROGRESS_DURING_DOWNLOAD_MAX;
-            return Math.min(UI_PROGRESS_DURING_DOWNLOAD_MAX + initT * initSpan, 0.999);
-          }
-          return UI_PROGRESS_ON_UNITY_READY;
+          return Math.min(netRatio * UI_PROGRESS_DURING_DOWNLOAD_MAX, UI_PROGRESS_DURING_DOWNLOAD_MAX);
         }
-        if (unityProgress >= 1) return UI_PROGRESS_ON_UNITY_READY;
-        return Math.min(mapUnityLoaderProgressToUi(unityProgress), 0.2);
+        return Math.min(mapUnityLoaderProgressToUi(unityProgress), UI_PROGRESS_DURING_DOWNLOAD_MAX);
       }
 
       function prefetchBuildAssetSizes() {
@@ -734,8 +806,58 @@
         });
       }
 
+      function canStartPostDownloadRamp(unityProgress) {
+        if (buildDownloadsReadyForInit()) return true;
+        if (_unityInstanceReady) return true;
+        if (unityProgress >= UNITY_DOWNLOAD_PROGRESS_MAX) return true;
+        return false;
+      }
+
+      function ensurePostDownloadRamp() {
+        if (_loaderHidden) return;
+
+        if (!_postDownloadPhase) {
+          if (!canStartPostDownloadRamp(lastUnityLoaderProgressForUi)) return;
+          _postDownloadPhase = true;
+          currentDownloadSpeedBps = 0;
+          if (progressSpeedEl) progressSpeedEl.style.display = "none";
+        }
+
+        smoothProgress.setTarget(1.0);
+        pollLoaderHideWhenReady();
+      }
+
       function applyLoaderUiProgress(unityProgress) {
-        smoothProgress.setSynced(combinedLoaderUiTarget(unityProgress));
+        if (_loaderHidden) return;
+
+        if (!_postDownloadPhase) {
+          if (canStartPostDownloadRamp(unityProgress)) {
+            ensurePostDownloadRamp();
+            return;
+          }
+          var target = combinedLoaderUiTarget(unityProgress);
+          if (target < smoothProgress.targetValue) target = smoothProgress.targetValue;
+          smoothProgress.setTarget(target);
+          return;
+        }
+
+        ensurePostDownloadRamp();
+      }
+
+      function isLoaderUiAtFullPercent() {
+        return smoothProgress.currentValue >= 0.9995 &&
+          smoothProgress.targetValue >= 1.0;
+      }
+
+      function pollLoaderHideWhenReady() {
+        if (_loaderHidden || _loaderHideScheduled) return;
+        if (!_postDownloadPhase || !_unityInstanceReady) return;
+        if (!isLoaderUiAtFullPercent()) {
+          requestAnimationFrame(pollLoaderHideWhenReady);
+          return;
+        }
+        _loaderHideScheduled = true;
+        setTimeout(hideUnityLoader, LOADER_HOLD_AT_100_MS);
       }
 
       function pushLoaderProgressFromNetworkIfNeeded() {
@@ -857,7 +979,13 @@
       }
 
       loadingBar.style.display = "block";
+      canvas.style.visibility = "hidden";
+      canvas.style.opacity = "0";
       smoothProgress.setImmediate(0);
+
+      _loaderForceHideTimer = setTimeout(function () {
+        if (!_loaderHidden) hideUnityLoader();
+      }, 120000);
 
       /* ── iOS Safari detection (excludes Chrome/Firefox/Edge/Opera on iOS) ── */
       var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
@@ -967,6 +1095,26 @@
         loaderShield.style.display = 'none';
       }
 
+      function hideUnityLoader() {
+        if (_loaderHidden || _maintenanceActive) return;
+        _loaderHidden = true;
+        _loaderHideScheduled = true;
+        if (_loaderForceHideTimer != null) {
+          clearTimeout(_loaderForceHideTimer);
+          _loaderForceHideTimer = null;
+        }
+        smoothProgress.stop();
+        loadingBar.style.display = "none";
+        canvas.style.visibility = "visible";
+        canvas.style.opacity = "1";
+        unlockLoaderInput();
+        if (typeof preventScroll === 'function') {
+          document.removeEventListener('touchmove', preventScroll);
+          document.removeEventListener('wheel', preventScroll);
+        }
+        ensureVideoAutoplay();
+      }
+
       /* ── Fullscreen for non-iOS-Safari browsers ── */
       function requestFs() {
         if (_maintenanceActive) return;
@@ -1055,18 +1203,11 @@
               clearInterval(buildResourcePollId);
               buildResourcePollId = null;
             }
-            smoothProgress.setImmediate(1.0);
-            smoothProgress.stop();
-            loadingBar.style.display = "none";
             window.unityInstance = unityInstance;
             _unityLoaded = true;
-            unlockLoaderInput();
-            if (typeof preventScroll === 'function') {
-              document.removeEventListener('touchmove', preventScroll);
-              document.removeEventListener('wheel', preventScroll);
-            }
+            _unityInstanceReady = true;
+            ensurePostDownloadRamp();
 
-            ensureVideoAutoplay();
             setTimeout(ensureVideoAutoplay, 500);
             setTimeout(ensureVideoAutoplay, 1500);
             var videoInterval = setInterval(ensureVideoAutoplay, 500);
@@ -1374,11 +1515,11 @@
       checkOrientation();
 
       function getApiBase() {
-        return 'https://gamevault222.com';
         if (window.CASINO_API_BASE) return window.CASINO_API_BASE;
         var metaEl = document.querySelector('meta[name="casino-api-base"]');
         if (metaEl && metaEl.content) return metaEl.content;
-        return window.location.origin;
+        //return 'https://gamevault222.com';
+        return 'http://localhost:5036';
       }
 
       var MAINTENANCE_HTML_KEY = 'casino-maintenance-html';
