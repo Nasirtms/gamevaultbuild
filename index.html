@@ -425,10 +425,11 @@
       // Real bytes → 0–90% UI; after all build files finish → smooth 90–100%; hide loader then show canvas.
       var UI_PROGRESS_DURING_DOWNLOAD_MAX = 0.9;
       var UI_NETWORK_COMPLETE_RATIO = 0.995;
-      var LOADER_HOLD_AT_100_MS = 450;
-      // Max UI progress increase per animation frame (prevents jumps to 100%).
+      var LOADER_HOLD_AT_100_MS = 600;
+      // Max UI progress increase er animation frame (prevents jumps to 100%).
       var UI_PROGRESS_MAX_STEP_PER_FRAME = 0.01;
-      var UI_POST_DOWNLOAD_MAX_STEP_PER_FRAME = 0.0035;
+      // Faster final ramp once Unity is ready (avoids video/game playing behind loader too long).
+      var UI_POST_DOWNLOAD_MAX_STEP_PER_FRAME = 0.028;
 
       function mapUnityLoaderProgressToUi(unityProgress) {
         var p = Math.min(Math.max(unityProgress, 0), UNITY_DOWNLOAD_PROGRESS_MAX);
@@ -705,7 +706,7 @@
           }
 
           var speed = 0.035 + Math.abs(difference) * 0.025;
-          speed = Math.min(speed, _postDownloadPhase ? 0.04 : 0.065);
+          speed = Math.min(speed, _postDownloadPhase ? 0.12 : 0.065);
 
           var step = difference * speed;
           if (step > 0) {
@@ -1207,11 +1208,6 @@
             _unityLoaded = true;
             _unityInstanceReady = true;
             ensurePostDownloadRamp();
-
-            setTimeout(ensureVideoAutoplay, 500);
-            setTimeout(ensureVideoAutoplay, 1500);
-            var videoInterval = setInterval(ensureVideoAutoplay, 500);
-            setTimeout(function () { clearInterval(videoInterval); }, 5000);
           }).catch(function () {
             showCasinoMaintenancePage();
           });
