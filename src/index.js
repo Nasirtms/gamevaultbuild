@@ -7,6 +7,7 @@ export default {
     if (
       path.startsWith("/api") ||
       path.startsWith("/ws") ||
+      path.startsWith("/webhook") ||
       path.startsWith("/adminPanel") ||
       path.toLowerCase().startsWith("/adminpanel")
     ) {
