@@ -1099,7 +1099,7 @@
 
       var loaderShield = document.createElement('div');
       loaderShield.id = 'loader-input-shield';
-      loaderShield.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:99996;background:#1a1718;';
+      loaderShield.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:99996;background:transparent;pointer-events:auto;';
       document.body.appendChild(loaderShield);
 
       function lockLoaderInput() {
@@ -1123,8 +1123,10 @@
         }
         smoothProgress.stop();
         loadingBar.style.display = "none";
+        canvas.classList.remove("unity-canvas-loading");
         canvas.style.visibility = "visible";
         canvas.style.opacity = "1";
+        canvas.style.display = "block";
         unlockLoaderInput();
         if (typeof preventScroll === 'function') {
           document.removeEventListener('touchmove', preventScroll);
@@ -1133,15 +1135,41 @@
         ensureVideoAutoplay();
       }
 
+      function syncMobileLoaderLayout() {
+        if (_loaderHidden || !isMobile) return;
+        var h = (window.visualViewport && window.visualViewport.height)
+          ? window.visualViewport.height
+          : window.innerHeight;
+        var w = (window.visualViewport && window.visualViewport.width)
+          ? window.visualViewport.width
+          : window.innerWidth;
+        container.style.width = w + 'px';
+        container.style.height = h + 'px';
+      }
+
+      if (isMobile) {
+        syncMobileLoaderLayout();
+        window.addEventListener('resize', syncMobileLoaderLayout);
+        window.addEventListener('orientationchange', function () {
+          setTimeout(syncMobileLoaderLayout, 150);
+        });
+      }
+
       /* ── Fullscreen for non-iOS-Safari browsers ── */
       function requestFs() {
         if (_maintenanceActive) return;
         if (isIOSSafari) return;
-        var el = document.documentElement;
-        if (el.requestFullscreen) el.requestFullscreen();
-        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-        else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
-        else if (el.msRequestFullscreen) el.msRequestFullscreen();
+        var el = isMobile ? container : document.documentElement;
+        var p = Promise.resolve();
+        if (el.requestFullscreen) p = el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) p = el.webkitRequestFullscreen();
+        else if (el.mozRequestFullScreen) p = el.mozRequestFullScreen();
+        else if (el.msRequestFullscreen) p = el.msRequestFullscreen();
+        if (p && typeof p.then === 'function') {
+          p.then(syncMobileLoaderLayout).catch(function () {});
+        } else {
+          setTimeout(syncMobileLoaderLayout, 100);
+        }
       }
 
       function isFullscreen() {
@@ -1473,10 +1501,18 @@
         }
       }
 
-      document.addEventListener('fullscreenchange', updateFullscreenHintVisibility);
-      document.addEventListener('webkitfullscreenchange', updateFullscreenHintVisibility);
-      document.addEventListener('mozfullscreenchange', updateFullscreenHintVisibility);
-      document.addEventListener('MSFullscreenChange', updateFullscreenHintVisibility);
+      function onFullscreenLayoutChange() {
+        syncMobileLoaderLayout();
+        updateFullscreenHintVisibility();
+      }
+
+      document.addEventListener('fullscreenchange', onFullscreenLayoutChange);
+      document.addEventListener('webkitfullscreenchange', onFullscreenLayoutChange);
+      document.addEventListener('mozfullscreenchange', onFullscreenLayoutChange);
+      document.addEventListener('MSFullscreenChange', onFullscreenLayoutChange);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', syncMobileLoaderLayout);
+      }
 
       setTimeout(showLoaderFsHint, 300);
 
