@@ -9,6 +9,25 @@
       html, body { margin: 0; padding: 0; background: #1a1718 !important; color-scheme: dark; }
       #unity-container { background: #1a1718 !important; }
       #unity-canvas { background: #231F20 !important; }
+      #unity-loading-bar,
+      #unity-loading-bar #unity-progress-text {
+        font-family: 'Rajdhani', 'Segoe UI', Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        forced-color-adjust: none;
+      }
+      #unity-loading-bar .unity-progress-label {
+        color: #8ba8c0 !important;
+        -webkit-text-fill-color: #8ba8c0 !important;
+      }
+      #unity-loading-bar .unity-progress-value {
+        color: #70d1ff !important;
+        -webkit-text-fill-color: #70d1ff !important;
+        text-shadow: 0 0 12px rgba(112, 209, 255, 0.35) !important;
+      }
+      #unity-loading-bar .unity-progress-speed {
+        color: #4a6275 !important;
+        -webkit-text-fill-color: #4a6275 !important;
+      }
     </style>
     <script>
     (function () {
@@ -404,6 +423,25 @@
       var progressText = document.querySelector("#unity-progress-text");
       var progressValueEl = progressText ? progressText.querySelector(".unity-progress-value") : null;
       var progressSpeedEl = progressText ? progressText.querySelector(".unity-progress-speed") : null;
+      var progressLabelEl = progressText ? progressText.querySelector(".unity-progress-label") : null;
+      var LOADER_LABEL_COLOR = "#8ba8c0";
+      var LOADER_VALUE_COLOR = "#70d1ff";
+      var LOADER_SPEED_COLOR = "#4a6275";
+
+      function applyLoaderTextColors() {
+        if (progressLabelEl) {
+          progressLabelEl.style.setProperty("color", LOADER_LABEL_COLOR, "important");
+          progressLabelEl.style.setProperty("-webkit-text-fill-color", LOADER_LABEL_COLOR, "important");
+        }
+        if (progressValueEl) {
+          progressValueEl.style.setProperty("color", LOADER_VALUE_COLOR, "important");
+          progressValueEl.style.setProperty("-webkit-text-fill-color", LOADER_VALUE_COLOR, "important");
+        }
+        if (progressSpeedEl) {
+          progressSpeedEl.style.setProperty("color", LOADER_SPEED_COLOR, "important");
+          progressSpeedEl.style.setProperty("-webkit-text-fill-color", LOADER_SPEED_COLOR, "important");
+        }
+      }
       var _maintenanceActive = false;
       var buildVersion = "1778929172191";
 
@@ -779,6 +817,7 @@
             progressSpeedEl.textContent = speedStr ? "Est. speed: " + speedStr : "";
             progressSpeedEl.style.display = speedStr ? "" : "none";
           }
+          applyLoaderTextColors();
         }
       };
 
@@ -996,6 +1035,7 @@
       }
 
       loadingBar.style.display = "block";
+      applyLoaderTextColors();
       canvas.classList.add("unity-canvas-loading");
       canvas.style.visibility = "hidden";
       canvas.style.opacity = "0";
