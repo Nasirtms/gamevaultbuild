@@ -139,7 +139,7 @@
         color: #fff !important;
         display: none !important;
         justify-content: center !important; align-items: center !important;
-        z-index: 99999 !important;
+        z-index: 100010 !important;
         backdrop-filter: blur(12px) !important; -webkit-backdrop-filter: blur(12px) !important;
       }
       #rotate-device.show {
@@ -376,6 +376,16 @@
         </div>
       </div>
       <div id="unity-warning"> </div>
+      <!-- rotate overlay must stay inside #unity-container so it remains visible in mobile fullscreen -->
+      <div id="rotate-device">
+        <div class="rotate-content" role="status" aria-live="polite" aria-label="Rotate device instruction">
+          <div class="rotate-icon" aria-hidden="true">
+            <div class="hint-arrow"></div>
+            <div class="phone"></div>
+          </div>
+          <div class="rotate-text">Please rotate your device</div>
+        </div>
+      </div>
     </div>
 
     <div id="ios-scroll-spacer"></div>
@@ -390,16 +400,6 @@
           <span class="hint-normal">anywhere for</span>
           <span class="hint-fs">Fullscreen</span>
         </div>
-      </div>
-    </div>
-
-    <div id="rotate-device">
-      <div class="rotate-content" role="status" aria-live="polite" aria-label="Rotate device instruction">
-        <div class="rotate-icon" aria-hidden="true">
-          <div class="hint-arrow"></div>
-          <div class="phone"></div>
-        </div>
-        <div class="rotate-text">Please rotate your device</div>
       </div>
     </div>
 
@@ -1544,6 +1544,8 @@
       function onFullscreenLayoutChange() {
         syncMobileLoaderLayout();
         updateFullscreenHintVisibility();
+        checkOrientation();
+        setTimeout(checkOrientation, 120);
       }
 
       document.addEventListener('fullscreenchange', onFullscreenLayoutChange);
@@ -1562,6 +1564,18 @@
         document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
       }
 
+      function isPortraitForRotateHint() {
+        if (window.innerHeight > window.innerWidth) return true;
+        try {
+          var so = window.screen && window.screen.orientation;
+          if (so && so.type && /portrait/i.test(so.type)) return true;
+        } catch (e) {}
+        if (typeof window.matchMedia === 'function' && window.matchMedia('(orientation: portrait)').matches) {
+          return true;
+        }
+        return false;
+      }
+
       function checkOrientation() {
         setVh();
         var isMobileDevice =
@@ -1570,7 +1584,7 @@
           (navigator.maxTouchPoints && navigator.maxTouchPoints > 1 && /MacIntel/i.test(navigator.platform));
 
         if (_maintenanceActive) return;
-        if (isMobileDevice && window.innerHeight > window.innerWidth) {
+        if (isMobileDevice && isPortraitForRotateHint()) {
           rotateOverlay.classList.add("show");
           if (loaderFsHint) loaderFsHint.classList.remove("show");
           hideLoaderFsHint();
