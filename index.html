@@ -430,6 +430,15 @@
 
     <script>
 
+	  // Disable browser console logs only on live site
+	  if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+		console.log = function () {};
+		console.warn = function () {};
+		console.error = function () {};
+		console.info = function () {};
+		console.debug = function () {};
+	  }
+
       var container = document.querySelector("#unity-container");
       var canvas = document.querySelector("#unity-canvas");
       var loadingBar = document.querySelector("#unity-loading-bar");
