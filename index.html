@@ -146,6 +146,13 @@
         display: flex !important;
         animation: rotateFadeIn 0.5s ease-out;
       }
+      /* Fullscreen API uses a top layer: overlay must live under the fullscreen root and stack above WebGL/loader. */
+      html:fullscreen #rotate-device.show,
+      html:-webkit-full-screen #rotate-device.show,
+      #unity-container:fullscreen #rotate-device.show,
+      #unity-container:-webkit-full-screen #rotate-device.show {
+        z-index: 2147483646 !important;
+      }
       .rotate-content {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         gap: 24px; padding: 36px 44px;
@@ -1582,14 +1589,21 @@
       var rotateOverlayHome = document.body;
 
       function getFullscreenElement() {
-        return document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+        return document.fullscreenElement
+          || document.webkitFullscreenElement
+          || document.webkitCurrentFullScreenElement
+          || document.mozFullScreenElement
+          || document.msFullscreenElement;
       }
 
       function ensureRotateOverlayPlacement() {
         if (!rotateOverlay) return;
         var fsEl = getFullscreenElement();
         var target = fsEl || rotateOverlayHome;
-        if (rotateOverlay.parentNode !== target) {
+        /* appendChild when needed: reparent into fullscreen subtree (top layer), or move to end
+           so the overlay stacks above canvas/loader siblings added after it. */
+        var p = rotateOverlay.parentNode;
+        if (p !== target || rotateOverlay.nextSibling) {
           target.appendChild(rotateOverlay);
         }
       }
