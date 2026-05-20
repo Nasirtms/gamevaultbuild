@@ -213,6 +213,15 @@
         from { opacity: 0; }
         to   { opacity: 1; }
       }
+      html.portrait-rotate-active #unity-canvas,
+      html.portrait-rotate-active #unity-loading-bar,
+      html.portrait-rotate-active #unity-warning,
+      html.portrait-rotate-active #loader-fs-hint,
+      html.portrait-rotate-active #ios-swipe-hint,
+      html.portrait-rotate-active #loader-input-shield {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
       @media (prefers-reduced-motion: reduce) {
         .rotate-icon { animation: none; }
         .hint-arrow { animation: none; }
@@ -376,19 +385,19 @@
         </div>
       </div>
       <div id="unity-warning"> </div>
-      <!-- rotate overlay must stay inside #unity-container so it remains visible in mobile fullscreen -->
-      <div id="rotate-device">
-        <div class="rotate-content" role="status" aria-live="polite" aria-label="Rotate device instruction">
-          <div class="rotate-icon" aria-hidden="true">
-            <div class="hint-arrow"></div>
-            <div class="phone"></div>
-          </div>
-          <div class="rotate-text">Please rotate your device</div>
-        </div>
-      </div>
     </div>
 
     <div id="ios-scroll-spacer"></div>
+
+    <div id="rotate-device">
+      <div class="rotate-content" role="status" aria-live="polite" aria-label="Rotate device instruction">
+        <div class="rotate-icon" aria-hidden="true">
+          <div class="hint-arrow"></div>
+          <div class="phone"></div>
+        </div>
+        <div class="rotate-text">Please rotate your device</div>
+      </div>
+    </div>
 
     <div id="loader-fs-hint">
       <div class="loader-hint-card">
@@ -1206,9 +1215,17 @@
         else if (el.mozRequestFullScreen) p = el.mozRequestFullScreen();
         else if (el.msRequestFullscreen) p = el.msRequestFullscreen();
         if (p && typeof p.then === 'function') {
-          p.then(syncMobileLoaderLayout).catch(function () {});
+          p.then(function () {
+            syncMobileLoaderLayout();
+            ensureRotateOverlayPlacement();
+            checkOrientation();
+          }).catch(function () {});
         } else {
-          setTimeout(syncMobileLoaderLayout, 100);
+          setTimeout(function () {
+            syncMobileLoaderLayout();
+            ensureRotateOverlayPlacement();
+            checkOrientation();
+          }, 100);
         }
       }
 
@@ -1514,6 +1531,7 @@
       function showLoaderFsHint() {
         if (!loaderFsHint) return;
         if (_maintenanceActive) return;
+        if (document.documentElement.classList.contains('portrait-rotate-active')) return;
         if (isFullscreen()) return;
         if (isIOSStandalone) return;
         if (isIOSSafari) return;
@@ -1542,10 +1560,12 @@
       }
 
       function onFullscreenLayoutChange() {
+        ensureRotateOverlayPlacement();
         syncMobileLoaderLayout();
         updateFullscreenHintVisibility();
         checkOrientation();
         setTimeout(checkOrientation, 120);
+        setTimeout(checkOrientation, 350);
       }
 
       document.addEventListener('fullscreenchange', onFullscreenLayoutChange);
@@ -1559,25 +1579,51 @@
       setTimeout(showLoaderFsHint, 300);
 
       var rotateOverlay = document.getElementById("rotate-device");
+      var rotateOverlayHome = document.body;
+
+      function getFullscreenElement() {
+        return document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+      }
+
+      function ensureRotateOverlayPlacement() {
+        if (!rotateOverlay) return;
+        var fsEl = getFullscreenElement();
+        var target = fsEl || rotateOverlayHome;
+        if (rotateOverlay.parentNode !== target) {
+          target.appendChild(rotateOverlay);
+        }
+      }
 
       function setVh() {
         document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
       }
 
       function isPortraitForRotateHint() {
-        if (window.innerHeight > window.innerWidth) return true;
-        try {
-          var so = window.screen && window.screen.orientation;
-          if (so && so.type && /portrait/i.test(so.type)) return true;
-        } catch (e) {}
         if (typeof window.matchMedia === 'function' && window.matchMedia('(orientation: portrait)').matches) {
           return true;
         }
-        return false;
+        try {
+          var so = window.screen && window.screen.orientation;
+          if (so) {
+            if (so.type && /portrait/i.test(so.type)) return true;
+            if (typeof so.angle === 'number' && (so.angle === 0 || so.angle === 180)) return true;
+          }
+        } catch (e) {}
+        var w = (window.visualViewport && window.visualViewport.width) ? window.visualViewport.width : window.innerWidth;
+        var h = (window.visualViewport && window.visualViewport.height) ? window.visualViewport.height : window.innerHeight;
+        return h > w;
+      }
+
+      function setPortraitRotateActive(active) {
+        document.documentElement.classList.toggle('portrait-rotate-active', active);
+        if (!rotateOverlay) return;
+        ensureRotateOverlayPlacement();
+        rotateOverlay.classList.toggle('show', active);
       }
 
       function checkOrientation() {
         setVh();
+        ensureRotateOverlayPlacement();
         var isMobileDevice =
           (navigator.userAgentData && navigator.userAgentData.mobile === true) ||
           /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
@@ -1585,15 +1631,15 @@
 
         if (_maintenanceActive) return;
         if (isMobileDevice && isPortraitForRotateHint()) {
-          rotateOverlay.classList.add("show");
-          if (loaderFsHint) loaderFsHint.classList.remove("show");
+          setPortraitRotateActive(true);
           hideLoaderFsHint();
-          container.style.visibility = "hidden";
           var iosHnt = document.getElementById('ios-swipe-hint');
           if (iosHnt) iosHnt.classList.remove('show');
         } else {
-          rotateOverlay.classList.remove("show");
-          container.style.visibility = "visible";
+          setPortraitRotateActive(false);
+          if (container.style.visibility === 'hidden') {
+            container.style.visibility = 'visible';
+          }
           if (isIOSSafari && !isIOSStandalone) {
             _iosGameStarted = false;
             document.documentElement.classList.remove('ios-game-started');
@@ -1611,10 +1657,18 @@
       }
 
       window.addEventListener("resize", checkOrientation);
-      window.addEventListener("orientationchange", checkOrientation);
+      window.addEventListener("orientationchange", function () {
+        setTimeout(checkOrientation, 100);
+        setTimeout(checkOrientation, 300);
+      });
       if (window.visualViewport) {
         window.visualViewport.addEventListener("resize", checkOrientation);
       }
+      try {
+        if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
+          window.screen.orientation.addEventListener("change", checkOrientation);
+        }
+      } catch (e) {}
       checkOrientation();
 
       function getApiBase() {
@@ -1717,7 +1771,7 @@
         _maintenanceActive = true;
         loadingBar.style.display = 'none';
         container.style.display = 'none';
-        if (typeof rotateOverlay !== 'undefined' && rotateOverlay) rotateOverlay.classList.remove('show');
+        setPortraitRotateActive(false);
         hideLoaderFsHint();
         var iosHnt = document.getElementById('ios-swipe-hint');
         if (iosHnt) iosHnt.classList.remove('show');
