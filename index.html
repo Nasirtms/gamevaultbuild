@@ -49,7 +49,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#000000">
-    <meta name="casino-api-base" content="">
+    <meta name="casino-api-base" content="https://api.gamevault222.com">
     <meta name="casino-socket-base" content="https://api.gamevault222.com">
     <script>
     (function () {
@@ -1852,11 +1852,13 @@
         return false;
       }
 
-      function checkMaintenance() {
+      var MAINTENANCE_FETCH_RETRIES = 3;
+      var MAINTENANCE_FETCH_RETRY_MS = 600;
+
+      function fetchMaintenanceStatus(attempt) {
         var base = getApiBase();
         var cacheBust = '_cb=' + Date.now();
-
-        fetch(base + '/api/maintenance?' + cacheBust, {
+        return fetch(base + '/api/maintenance?' + cacheBust, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
@@ -1868,20 +1870,34 @@
           credentials: 'omit'
         }).then(function (res) {
           if (res.status !== 200) {
-            showCasinoMaintenancePage();
-            return;
+            var err = new Error('maintenance status ' + res.status);
+            err.retryable = res.status >= 500 || res.status === 429;
+            throw err;
           }
-          return res.json().then(function (json) {
-            if (isCasinoMaintenanceActive(json)) {
-              showCasinoMaintenancePage();
-            } else {
-              startUnityGame();
-            }
-          }).catch(function () {
+          return res.json();
+        }).catch(function (err) {
+          if (attempt < MAINTENANCE_FETCH_RETRIES && (!err || err.retryable !== false)) {
+            return new Promise(function (resolve) {
+              setTimeout(resolve, MAINTENANCE_FETCH_RETRY_MS * attempt);
+            }).then(function () {
+              return fetchMaintenanceStatus(attempt + 1);
+            });
+          }
+          throw err;
+        });
+      }
+
+      function checkMaintenance() {
+        fetchMaintenanceStatus(1).then(function (json) {
+          if (isCasinoMaintenanceActive(json)) {
             showCasinoMaintenancePage();
-          });
+          } else {
+            startUnityGame();
+          }
         }).catch(function () {
-          showCasinoMaintenancePage();
+          /* Network reset / API down: start game so a flaky check does not block play.
+             Real maintenance still applies when the API returns 200 with active rows. */
+          startUnityGame();
         });
       }
 
