@@ -1457,49 +1457,43 @@
 
       var isLoggedIn = false;
 
-      var TOKEN_ENCRYPTION_KEY = 'GameVault2.02025!@#TokenKey';
+      var UNITY_TOKEN_KEY = 'unityToken';
+      var UNITY_TOKEN_TS_KEY = 'unityTokenTimestamp';
 
-      function encryptToken(token) {
-        var result = '';
-        for (var i = 0; i < token.length; i++) {
-          result += String.fromCharCode(token.charCodeAt(i) ^ TOKEN_ENCRYPTION_KEY.charCodeAt(i % TOKEN_ENCRYPTION_KEY.length));
-        }
-        return btoa(result);
-      }
-
-      function decryptToken(encryptedToken) {
-        var decoded = atob(encryptedToken);
-        var result = '';
-        for (var i = 0; i < decoded.length; i++) {
-          result += String.fromCharCode(decoded.charCodeAt(i) ^ TOKEN_ENCRYPTION_KEY.charCodeAt(i % TOKEN_ENCRYPTION_KEY.length));
-        }
-        return result;
-      }
-
-      function storeEncryptedToken(token) {
+      function storeToken(token) {
+        if (!token) return;
         try {
-          localStorage.setItem('unityTokenEncrypted', encryptToken(token));
-          localStorage.setItem('unityTokenTimestamp', Date.now().toString());
+          localStorage.setItem(UNITY_TOKEN_KEY, token);
+          localStorage.setItem(UNITY_TOKEN_TS_KEY, Date.now().toString());
         } catch (e) {}
       }
 
       function getStoredToken() {
         try {
-          var encrypted = localStorage.getItem('unityTokenEncrypted');
-          if (encrypted) return decryptToken(encrypted);
+          var token = localStorage.getItem(UNITY_TOKEN_KEY);
+          if (token) return token;
         } catch (e) {}
         return null;
       }
 
       function clearStoredToken() {
         try {
+          localStorage.removeItem(UNITY_TOKEN_KEY);
+          localStorage.removeItem(UNITY_TOKEN_TS_KEY);
           localStorage.removeItem('unityTokenEncrypted');
           localStorage.removeItem('unityTokenTimestamp');
         } catch (e) {}
       }
 
+      (function clearLegacyEncryptedTokenStorage() {
+        try {
+          localStorage.removeItem('unityTokenEncrypted');
+          localStorage.removeItem('unityTokenTimestamp');
+        } catch (e) {}
+      })();
+
       function onTokenReceived(token) {
-        storeEncryptedToken(token);
+        storeToken(token);
       }
 
       function getToken() {
