@@ -349,9 +349,12 @@
     <type fullname="InputManager_RPS" preserve="all" />
     <type fullname="IrishPotLuckAutoSpinController" preserve="all" />
     <type fullname="IrishPotLuckBetController" preserve="all" />
+    <type fullname="IrishPotLuckCharacterController" preserve="all" />
     <type fullname="IrishPotLuckFreeGameTransitionController" preserve="all" />
     <type fullname="IrishPotLuckFreeSpinController" preserve="all" />
     <type fullname="IrishPotLuckGameSettings" preserve="all" />
+    <type fullname="IrishPotLuckJackpotWheelController" preserve="all" />
+    <type fullname="IrishPotLuckJackpotWheelTransition" preserve="all" />
     <type fullname="IrishPotLuckPaylineController" preserve="all" />
     <type fullname="IrishPotLuckReelScript" preserve="all" />
     <type fullname="IrishPotLuckRulesPopupController" preserve="all" />
