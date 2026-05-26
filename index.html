@@ -82,7 +82,8 @@
         gap: 18px; padding: 24px;
         background: rgba(8, 4, 20, 0.55);
         backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-        pointer-events: none;
+        pointer-events: auto;
+        touch-action: manipulation;
         user-select: none; -webkit-user-select: none;
       }
       #loader-fs-hint.show {
@@ -235,7 +236,7 @@
         .rotate-text { animation: none; }
       }
 
-      /* ── iOS Safari fullscreen workaround ── */
+      /* ── iOS browser fullscreen workaround ── */
 
       /* html element: enable scrolling before game starts */
       .ios-safari-fullscreen-workaround {
@@ -247,7 +248,7 @@
       }
 
       .ios-safari-fullscreen-workaround body {
-        min-height: calc(var(--unity-height, 100dvh) + 80px) !important;
+        min-height: calc(var(--unity-height, 100dvh) + 260px) !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
         -webkit-overflow-scrolling: touch;
@@ -278,7 +279,7 @@
       .ios-safari-fullscreen-workaround #ios-scroll-spacer {
         display: block !important;
         width: 100%;
-        height: 90px;
+        height: 220px;
       }
 
       /* After Start Game: lock scroll, fix container, restore touch on canvas */
@@ -310,7 +311,7 @@
         display: none !important;
       }
 
-      /* iOS Safari swipe hint — fullscreen blur overlay */
+      /* iOS browser swipe hint — fullscreen blur overlay */
       #ios-swipe-hint {
         display: none;
         position: fixed;
@@ -322,6 +323,7 @@
         background: rgba(8, 4, 20, 0.6);
         backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
         pointer-events: none;
+        touch-action: pan-y;
         user-select: none; -webkit-user-select: none;
       }
       #ios-swipe-hint.show {
@@ -429,15 +431,6 @@
     </div>
 
     <script>
-
-	  // Disable browser console logs only on live site
-	  if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-		console.log = function () {};
-		console.warn = function () {};
-		console.error = function () {};
-		console.info = function () {};
-		console.debug = function () {};
-	  }
 
       var container = document.querySelector("#unity-container");
       var canvas = document.querySelector("#unity-canvas");
@@ -1006,6 +999,7 @@
       document.getElementsByTagName('head')[0].appendChild(meta);
 
       var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      var isAndroid = /Android/i.test(navigator.userAgent);
 
       if (isMobile) {
         container.className = "unity-mobile";
@@ -1070,13 +1064,19 @@
         if (!_loaderHidden) hideUnityLoader();
       }, 120000);
 
-      /* ── iOS Safari detection (excludes Chrome/Firefox/Edge/Opera on iOS) ── */
+      /* ── iOS browser detection ── */
       var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
         || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       var isSafari = /^((?!chrome|android|crios|fxios|edgios|opios|mercury).)*safari/i.test(navigator.userAgent);
       var isIOSSafari = isIOS && isSafari;
+      // Treat every iOS browser like Safari for the fake-fullscreen workaround.
+      // This includes Safari, Chrome iOS (CriOS), Firefox iOS (FxiOS), Edge iOS (EdgiOS), etc.
+      var isIOSBrowser = isIOS;
       var isIOSStandalone = isIOS && (window.navigator.standalone === true);
       var _iosGameStarted = false;
+      var iosSwipeHint = document.getElementById('ios-swipe-hint');
+      var iosExitFakeFullscreenForPrompt = null;
+      var iosRefreshFullscreenStateForPrompt = null;
 
       /* ── Compute --unity-height from visualViewport or innerHeight ── */
       function updateUnityHeight() {
@@ -1087,16 +1087,53 @@
         return h;
       }
 
-      /* ── iOS Safari workaround setup ── */
-      if (isIOSSafari && !isIOSStandalone) {
+      /* ── iOS browser workaround setup ── */
+      if (isIOSBrowser && !isIOSStandalone) {
         document.documentElement.classList.add('ios-safari-fullscreen-workaround');
-        updateUnityHeight();
-
-        var iosSwipeHint = document.getElementById('ios-swipe-hint');
 
         if (iosSwipeHint) iosSwipeHint.classList.add('show');
 
         function preventScroll(e) { e.preventDefault(); }
+        function iosKeepTopDuringLoad() { window.scrollTo(0, 0); }
+
+        function getIOSViewportHeight() {
+          return (window.visualViewport && window.visualViewport.height)
+            ? window.visualViewport.height
+            : window.innerHeight;
+        }
+
+        var iosInitialViewportHeight = updateUnityHeight();
+        var iosBestViewportHeight = iosInitialViewportHeight;
+        // The iOS fake-fullscreen lock only completes after the page has actually
+        // scrolled this far. This gives Safari/Chrome iOS enough swipe distance
+        // to collapse browser UI before we switch the game container to fixed.
+        var IOS_REQUIRED_SCROLL_DISTANCE = 140;
+        var iosLastScrollY = 0;
+
+        function applyIOSBestViewportHeight() {
+          var h = getIOSViewportHeight();
+          iosBestViewportHeight = Math.max(iosBestViewportHeight, h);
+          document.documentElement.style.setProperty('--unity-height', iosBestViewportHeight + 'px');
+          return iosBestViewportHeight;
+        }
+
+        function applyIOSCurrentViewportHeight() {
+          var h = updateUnityHeight();
+          container.style.height = h + 'px';
+          canvas.style.height = h + 'px';
+          return h;
+        }
+
+        function lockIOSIfRequiredScrollReached() {
+          if (_iosGameStarted) return;
+          if (iosLastScrollY < IOS_REQUIRED_SCROLL_DISTANCE) return;
+
+          var h = applyIOSBestViewportHeight();
+          container.style.height = h + 'px';
+          canvas.style.height = h + 'px';
+
+          iosLockGame();
+        }
 
         function iosLockGame() {
           if (_iosGameStarted) return;
@@ -1106,7 +1143,7 @@
 
           document.documentElement.classList.add('ios-game-started');
 
-          var h = updateUnityHeight();
+          var h = applyIOSBestViewportHeight();
           container.style.height = h + 'px';
           canvas.style.height = h + 'px';
 
@@ -1117,44 +1154,131 @@
             lockLoaderInput();
             document.addEventListener('touchmove', preventScroll, { passive: false });
             document.addEventListener('wheel', preventScroll, { passive: false });
-            window.addEventListener('scroll', function () { window.scrollTo(0, 0); });
+            window.addEventListener('scroll', iosKeepTopDuringLoad);
           }
         }
 
-        window.addEventListener('scroll', function () {
-          if (!_iosGameStarted && window.scrollY > 10) {
-            setTimeout(iosLockGame, 400);
+        iosExitFakeFullscreenForPrompt = function () {
+          if (!isIOSBrowser || isIOSStandalone || _maintenanceActive) return;
+          _iosGameStarted = false;
+          document.documentElement.classList.remove('ios-game-started');
+          document.documentElement.classList.add('ios-safari-fullscreen-workaround');
+
+          if (typeof preventScroll === 'function') {
+            document.removeEventListener('touchmove', preventScroll);
+            document.removeEventListener('wheel', preventScroll);
+            window.removeEventListener('scroll', iosKeepTopDuringLoad);
           }
+
+          unlockLoaderInput();
+
+          iosInitialViewportHeight = updateUnityHeight();
+          iosBestViewportHeight = iosInitialViewportHeight;
+          iosLastScrollY = 0;
+          container.style.height = iosInitialViewportHeight + 'px';
+          canvas.style.height = iosInitialViewportHeight + 'px';
+          window.scrollTo(0, 0);
+
+          hideLoaderFsHint();
+          if (iosSwipeHint && !document.documentElement.classList.contains('portrait-rotate-active')) {
+            iosSwipeHint.classList.add('show');
+          }
+        };
+
+        iosRefreshFullscreenStateForPrompt = function () {
+          if (!isIOSBrowser || isIOSStandalone || _maintenanceActive) return;
+          if (document.hidden) return;
+          if (document.documentElement.classList.contains('portrait-rotate-active')) return;
+
+          var currentH = getIOSViewportHeight();
+
+          if (!_iosGameStarted) {
+            iosInitialViewportHeight = currentH;
+            iosBestViewportHeight = Math.max(iosBestViewportHeight || currentH, currentH);
+            document.documentElement.style.setProperty('--unity-height', currentH + 'px');
+            hideLoaderFsHint();
+            if (iosSwipeHint) iosSwipeHint.classList.add('show');
+            return;
+          }
+
+          // If a system sheet, paste permission prompt, tab UI, or browser chrome shrinks the visible
+          // viewport after we had fake fullscreen, reset to the swipe prompt so the user can restore it.
+          var lostEnoughHeight = iosBestViewportHeight > 0 && currentH < iosBestViewportHeight - 44;
+          var classMissing = !document.documentElement.classList.contains('ios-game-started');
+          if (lostEnoughHeight || classMissing) {
+            iosExitFakeFullscreenForPrompt();
+          } else {
+            document.documentElement.style.setProperty('--unity-height', currentH + 'px');
+            container.style.height = currentH + 'px';
+            canvas.style.height = currentH + 'px';
+            if (iosSwipeHint) iosSwipeHint.classList.remove('show');
+          }
+        };
+
+        window.addEventListener('scroll', function () {
+          if (_iosGameStarted) return;
+
+          var currentY = window.scrollY || document.documentElement.scrollTop || 0;
+          iosLastScrollY = Math.max(iosLastScrollY, currentY);
+
+          var h = applyIOSBestViewportHeight();
+
+          lockIOSIfRequiredScrollReached();
         }, { passive: true });
 
         window.addEventListener('resize', function () {
           if (_iosGameStarted) {
-            var h = updateUnityHeight();
-            container.style.height = h + 'px';
-            canvas.style.height = h + 'px';
+            applyIOSCurrentViewportHeight();
+          } else {
+            var h = applyIOSBestViewportHeight();
+            if (h > iosInitialViewportHeight + 40) {
+              lockIOSIfRequiredScrollReached();
+            }
           }
         });
 
         window.addEventListener('orientationchange', function () {
-          if (_iosGameStarted) {
-            setTimeout(function () {
-              var h = updateUnityHeight();
-              container.style.height = h + 'px';
-              canvas.style.height = h + 'px';
-            }, 200);
-          }
+          setTimeout(function () {
+            if (_iosGameStarted) {
+              applyIOSCurrentViewportHeight();
+            } else {
+              iosInitialViewportHeight = updateUnityHeight();
+              iosBestViewportHeight = iosInitialViewportHeight;
+            }
+          }, 200);
         });
 
         if (window.visualViewport) {
           window.visualViewport.addEventListener('resize', function () {
             var h = updateUnityHeight();
+
             if (_iosGameStarted) {
               container.style.height = h + 'px';
               canvas.style.height = h + 'px';
+            } else {
+              iosBestViewportHeight = Math.max(iosBestViewportHeight, h);
+              document.documentElement.style.setProperty('--unity-height', iosBestViewportHeight + 'px');
+
+              if (iosBestViewportHeight > iosInitialViewportHeight + 40) {
+                lockIOSIfRequiredScrollReached();
+              }
             }
           });
+
           window.visualViewport.addEventListener('scroll', function () {
-            if (_iosGameStarted) updateUnityHeight();
+            var h = updateUnityHeight();
+
+            if (_iosGameStarted) {
+              container.style.height = h + 'px';
+              canvas.style.height = h + 'px';
+            } else {
+              iosBestViewportHeight = Math.max(iosBestViewportHeight, h);
+              document.documentElement.style.setProperty('--unity-height', iosBestViewportHeight + 'px');
+
+              if (iosBestViewportHeight > iosInitialViewportHeight + 40) {
+                lockIOSIfRequiredScrollReached();
+              }
+            }
           });
         }
       }
@@ -1196,6 +1320,9 @@
         if (typeof preventScroll === 'function') {
           document.removeEventListener('touchmove', preventScroll);
           document.removeEventListener('wheel', preventScroll);
+          if (typeof iosKeepTopDuringLoad === 'function') {
+            window.removeEventListener('scroll', iosKeepTopDuringLoad);
+          }
         }
         ensureVideoAutoplay();
       }
@@ -1220,54 +1347,133 @@
         });
       }
 
-      /* ── Fullscreen for non-iOS-Safari browsers ── */
+      /* ── Fullscreen for non-iOS browsers ── */
+      var realFullscreenRequestInFlight = false;
+      var realFullscreenLastRequestMs = 0;
+      var realFullscreenPromptCooldownUntil = 0;
+
       function requestFs() {
-        if (_maintenanceActive) return;
-        if (isIOSSafari) return;
-        var el = isMobile ? container : document.documentElement;
-        var p = Promise.resolve();
-        if (el.requestFullscreen) p = el.requestFullscreen();
-        else if (el.webkitRequestFullscreen) p = el.webkitRequestFullscreen();
-        else if (el.mozRequestFullScreen) p = el.mozRequestFullScreen();
-        else if (el.msRequestFullscreen) p = el.msRequestFullscreen();
-        if (p && typeof p.then === 'function') {
-          p.then(function () {
-            syncMobileLoaderLayout();
-            ensureRotateOverlayPlacement();
-            checkOrientation();
-          }).catch(function () {});
-        } else {
+        if (_maintenanceActive) return Promise.resolve(false);
+        if (isIOSBrowser) return Promise.resolve(false);
+
+        // On Android, use the page root as the fullscreen target. This is more reliable
+        // when the tap comes from an overlay outside #unity-container.
+        var el = document.documentElement;
+        var now = performance.now ? performance.now() : Date.now();
+        realFullscreenRequestInFlight = true;
+        realFullscreenLastRequestMs = now;
+        realFullscreenPromptCooldownUntil = now + 1600;
+        hideLoaderFsHint();
+
+        var p = null;
+        try {
+          if (el.requestFullscreen) p = el.requestFullscreen();
+          else if (el.webkitRequestFullscreen) p = el.webkitRequestFullscreen();
+          else if (el.mozRequestFullScreen) p = el.mozRequestFullScreen();
+          else if (el.msRequestFullscreen) p = el.msRequestFullscreen();
+        } catch (e) {
+          realFullscreenRequestInFlight = false;
+          realFullscreenPromptCooldownUntil = 0;
+          return Promise.resolve(false);
+        }
+
+        function afterRequest(success) {
           setTimeout(function () {
             syncMobileLoaderLayout();
             ensureRotateOverlayPlacement();
             checkOrientation();
-          }, 100);
+            realFullscreenRequestInFlight = false;
+            if (hasRealFullscreenElement()) {
+              realFullscreenBestViewportHeight = Math.max(realFullscreenBestViewportHeight, getVisibleViewportHeight());
+              hideLoaderFsHint();
+            } else {
+              realFullscreenPromptCooldownUntil = 0;
+              showRealFullscreenPromptNow();
+            }
+          }, 250);
+          return success;
         }
+
+        if (p && typeof p.then === 'function') {
+          return p.then(function () { return afterRequest(true); }).catch(function () { return afterRequest(false); });
+        }
+
+        // Some old WebViews use a prefixed method with no Promise return.
+        // If no fullscreen method existed at all, p stays null and the follow-up check will re-show the prompt.
+        setTimeout(function () { afterRequest(hasRealFullscreenElement()); }, 100);
+        return Promise.resolve(!!p || hasRealFullscreenElement());
       }
 
       function isFullscreen() {
         if (isIOSStandalone) return true;
-        if (isIOSSafari) return _iosGameStarted;
+        if (isIOSBrowser) return _iosGameStarted;
         return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
       }
 
-      /* ── Global click/touch handlers (non-iOS-Safari only) ── */
-      document.addEventListener('click', function () {
-        if (isIOSSafari) return;
+
+      var realFullscreenBestViewportHeight = 0;
+
+      function getVisibleViewportHeight() {
+        return (window.visualViewport && window.visualViewport.height)
+          ? window.visualViewport.height
+          : window.innerHeight;
+      }
+
+      function hasRealFullscreenElement() {
+        return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+      }
+
+      function realFullscreenVisuallyActive() {
+        if (isIOSBrowser || isIOSStandalone) return isFullscreen();
+
+        var now = performance.now ? performance.now() : Date.now();
+
+        // Do not re-show the prompt while a user-gesture fullscreen request is still settling.
+        if (realFullscreenRequestInFlight && now - realFullscreenLastRequestMs < 1800) {
+          return true;
+        }
+
+        if (!hasRealFullscreenElement()) {
+          realFullscreenBestViewportHeight = 0;
+          return false;
+        }
+
+        var h = getVisibleViewportHeight();
+        if (h > realFullscreenBestViewportHeight) realFullscreenBestViewportHeight = h;
+
+        // Android can briefly resize while entering fullscreen or while a native permission
+        // dialog is closing. Give the request a grace period so we do not immediately undo it.
+        if (now - realFullscreenLastRequestMs < 2200) {
+          return true;
+        }
+
+        // Some Android native permission sheets can leave the browser in a visually smaller
+        // state even when fullscreen events are unreliable. Treat a clear viewport shrink as
+        // needing the fullscreen prompt again.
+        if (realFullscreenBestViewportHeight > 0 && h < realFullscreenBestViewportHeight - 72) {
+          return false;
+        }
+
+        return true;
+      }
+
+      /* ── Global click/touch handlers (non-iOS only) ── */
+      document.addEventListener('click', function (e) {
+        if (isIOSBrowser) return;
+        if (loaderFsHint && loaderFsHint.classList.contains('show') && loaderFsHint.contains(e.target)) return;
         var tag = document.activeElement && document.activeElement.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-        if (!isFullscreen()) {
+        if (!realFullscreenVisuallyActive()) {
           requestFs();
-          hideLoaderFsHint();
           if (!_unityLoaded) lockLoaderInput();
         }
       });
 
-      document.addEventListener('touchend', function () {
-        if (isIOSSafari) return;
-        if (!isFullscreen()) {
+      document.addEventListener('touchend', function (e) {
+        if (isIOSBrowser) return;
+        if (loaderFsHint && loaderFsHint.classList.contains('show') && loaderFsHint.contains(e.target)) return;
+        if (!realFullscreenVisuallyActive()) {
           requestFs();
-          hideLoaderFsHint();
           if (!_unityLoaded) lockLoaderInput();
         }
       });
@@ -1538,13 +1744,26 @@
           || (navigator.maxTouchPoints > 1 && /MacIntel/i.test(navigator.platform));
       }
 
+      function showIOSFullscreenHint() {
+        if (!iosSwipeHint) return;
+        if (_maintenanceActive) return;
+        if (!isIOSBrowser || isIOSStandalone) return;
+        if (document.documentElement.classList.contains('portrait-rotate-active')) return;
+        hideLoaderFsHint();
+        iosSwipeHint.classList.add('show');
+      }
+
+      function hideIOSFullscreenHint() {
+        if (iosSwipeHint) iosSwipeHint.classList.remove('show');
+      }
+
       function showLoaderFsHint() {
         if (!loaderFsHint) return;
         if (_maintenanceActive) return;
         if (document.documentElement.classList.contains('portrait-rotate-active')) return;
         if (isFullscreen()) return;
         if (isIOSStandalone) return;
-        if (isIOSSafari) return;
+        if (isIOSBrowser) return;
 
         var actionWord = isMobileUA() ? 'Tap' : 'Click';
         var hintText = document.getElementById("loader-fs-hint-text");
@@ -1561,11 +1780,99 @@
         __fsHintVisible = false;
       }
 
+      function showRealFullscreenPromptNow() {
+        if (_maintenanceActive) return;
+        if (!loaderFsHint) return;
+        if (isIOSBrowser || isIOSStandalone) return;
+        if (!isMobileUA()) return;
+        if (document.documentElement.classList.contains('portrait-rotate-active')) return;
+        var now = performance.now ? performance.now() : Date.now();
+        if (now < realFullscreenPromptCooldownUntil) return;
+        if (realFullscreenVisuallyActive()) return;
+        showLoaderFsHint();
+      }
+
+      var realFullscreenPromptTapLockedUntil = 0;
+
+      function tryRestoreRealFullscreenFromPrompt() {
+        if (_maintenanceActive) return;
+        if (isIOSBrowser || isIOSStandalone) return;
+
+        var now = performance.now ? performance.now() : Date.now();
+        if (now < realFullscreenPromptTapLockedUntil) return;
+        realFullscreenPromptTapLockedUntil = now + 450;
+
+        // Important: do not run the visual/fullscreen watcher before requesting fullscreen.
+        // On Android, native dialogs can leave stale viewport/fullscreen state; this prompt tap
+        // must always make a fresh request directly from the user gesture.
+        hideLoaderFsHint();
+        realFullscreenPromptCooldownUntil = now + 1800;
+        requestFs();
+        if (!_unityLoaded) lockLoaderInput();
+
+        setTimeout(function () {
+          if (hasRealFullscreenElement()) {
+            realFullscreenBestViewportHeight = Math.max(realFullscreenBestViewportHeight, getVisibleViewportHeight());
+            hideLoaderFsHint();
+          } else {
+            realFullscreenPromptCooldownUntil = 0;
+            showRealFullscreenPromptNow();
+          }
+        }, 900);
+
+        setTimeout(function () {
+          if (hasRealFullscreenElement()) {
+            realFullscreenBestViewportHeight = Math.max(realFullscreenBestViewportHeight, getVisibleViewportHeight());
+            hideLoaderFsHint();
+          } else {
+            realFullscreenPromptCooldownUntil = 0;
+            showRealFullscreenPromptNow();
+          }
+        }, 1800);
+      }
+
+
+      function handleRealFullscreenPromptGesture(e) {
+        if (!loaderFsHint || !loaderFsHint.classList.contains('show')) return;
+        if (e && loaderFsHint.contains(e.target)) {
+          if (e.cancelable) e.preventDefault();
+          e.stopPropagation();
+          tryRestoreRealFullscreenFromPrompt();
+        }
+      }
+
+      if (loaderFsHint) {
+        // Capture-phase listeners make sure Android prompt taps reach requestFullscreen()
+        // before Unity canvas handlers or other document listeners can consume the gesture.
+        loaderFsHint.addEventListener('pointerup', handleRealFullscreenPromptGesture, { capture: true, passive: false });
+        loaderFsHint.addEventListener('touchend', handleRealFullscreenPromptGesture, { capture: true, passive: false });
+        loaderFsHint.addEventListener('click', handleRealFullscreenPromptGesture, { capture: true });
+        document.addEventListener('pointerup', handleRealFullscreenPromptGesture, true);
+        document.addEventListener('touchend', handleRealFullscreenPromptGesture, { capture: true, passive: false });
+        document.addEventListener('click', handleRealFullscreenPromptGesture, true);
+      }
+
       function updateFullscreenHintVisibility() {
-        if (isFullscreen()) {
+        if (_maintenanceActive) return;
+
+        if (isIOSBrowser && !isIOSStandalone) {
+          if (typeof iosRefreshFullscreenStateForPrompt === 'function') {
+            iosRefreshFullscreenStateForPrompt();
+          }
+          if (isFullscreen()) {
+            hideIOSFullscreenHint();
+            hideLoaderFsHint();
+          } else {
+            showIOSFullscreenHint();
+          }
+          return;
+        }
+
+        if (realFullscreenVisuallyActive()) {
           hideLoaderFsHint();
-        } else if (_unityLoaded) {
-          showLoaderFsHint();
+          hideIOSFullscreenHint();
+        } else if (isMobileUA()) {
+          showRealFullscreenPromptNow();
         }
       }
 
@@ -1586,7 +1893,79 @@
         window.visualViewport.addEventListener('resize', syncMobileLoaderLayout);
       }
 
-      setTimeout(showLoaderFsHint, 300);
+      var fullscreenPromptWatchTimer = null;
+      function scheduleFullscreenPromptCheck(delay) {
+        if (fullscreenPromptWatchTimer != null) {
+          clearTimeout(fullscreenPromptWatchTimer);
+          fullscreenPromptWatchTimer = null;
+        }
+        fullscreenPromptWatchTimer = setTimeout(function () {
+          fullscreenPromptWatchTimer = null;
+          updateFullscreenHintVisibility();
+        }, delay == null ? 120 : delay);
+      }
+
+      ['visibilitychange', 'webkitvisibilitychange', 'pageshow', 'focus', 'blur'].forEach(function (evt) {
+        window.addEventListener(evt, function () {
+          scheduleFullscreenPromptCheck(150);
+          scheduleFullscreenPromptCheck(650);
+        });
+        document.addEventListener(evt, function () {
+          scheduleFullscreenPromptCheck(150);
+          scheduleFullscreenPromptCheck(650);
+        });
+      });
+
+      window.addEventListener('resize', function () { scheduleFullscreenPromptCheck(180); });
+      window.addEventListener('orientationchange', function () { scheduleFullscreenPromptCheck(450); });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', function () { scheduleFullscreenPromptCheck(180); });
+        window.visualViewport.addEventListener('scroll', function () { scheduleFullscreenPromptCheck(180); });
+      }
+
+
+      function installClipboardFullscreenRecoveryHooks() {
+        if (!navigator.clipboard || navigator.clipboard.__gvFullscreenRecoveryInstalled) return;
+        navigator.clipboard.__gvFullscreenRecoveryInstalled = true;
+
+        function afterClipboardPrompt() {
+          scheduleFullscreenPromptCheck(120);
+          scheduleFullscreenPromptCheck(700);
+          scheduleFullscreenPromptCheck(1400);
+        }
+
+        ['readText', 'read', 'writeText', 'write'].forEach(function (methodName) {
+          var original = navigator.clipboard[methodName];
+          if (typeof original !== 'function') return;
+          try {
+            navigator.clipboard[methodName] = function () {
+              var result;
+              try {
+                result = original.apply(navigator.clipboard, arguments);
+              } catch (e) {
+                afterClipboardPrompt();
+                throw e;
+              }
+
+              if (result && typeof result.finally === 'function') {
+                return result.finally(afterClipboardPrompt);
+              }
+              afterClipboardPrompt();
+              return result;
+            };
+          } catch (e) {}
+        });
+      }
+
+      installClipboardFullscreenRecoveryHooks();
+
+      // Mobile browsers do not always fire fullscreen/focus events after native permission sheets
+      // such as clipboard paste permission. This lightweight watcher keeps the prompt honest.
+      setInterval(function () {
+        if (isMobileUA() && !_maintenanceActive) updateFullscreenHintVisibility();
+      }, 500);
+
+      setTimeout(updateFullscreenHintVisibility, 300);
 
       var rotateOverlay = document.getElementById("rotate-device");
       var rotateOverlayHome = document.body;
@@ -1657,19 +2036,22 @@
           if (container.style.visibility === 'hidden') {
             container.style.visibility = 'visible';
           }
-          if (isIOSSafari && !isIOSStandalone) {
-            _iosGameStarted = false;
-            document.documentElement.classList.remove('ios-game-started');
-            document.documentElement.classList.add('ios-safari-fullscreen-workaround');
-            unlockLoaderInput();
-            if (typeof preventScroll === 'function') {
-              document.removeEventListener('touchmove', preventScroll);
-              document.removeEventListener('wheel', preventScroll);
+          if (isIOSBrowser && !isIOSStandalone && !_iosGameStarted) {
+            if (typeof iosExitFakeFullscreenForPrompt === 'function') {
+              iosExitFakeFullscreenForPrompt();
+            } else {
+              document.documentElement.classList.remove('ios-game-started');
+              document.documentElement.classList.add('ios-safari-fullscreen-workaround');
+              unlockLoaderInput();
+              if (typeof preventScroll === 'function') {
+                document.removeEventListener('touchmove', preventScroll);
+                document.removeEventListener('wheel', preventScroll);
+              }
+              var iosHnt2 = document.getElementById('ios-swipe-hint');
+              if (iosHnt2) iosHnt2.classList.add('show');
             }
-            var iosHnt2 = document.getElementById('ios-swipe-hint');
-            if (iosHnt2) iosHnt2.classList.add('show');
           }
-          try { showLoaderFsHint(); } catch (e) {}
+          try { updateFullscreenHintVisibility(); } catch (e) {}
         }
       }
 
